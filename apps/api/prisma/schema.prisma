@@ -1,0 +1,348 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum PncpEditalStatus {
+  PUBLICADO @map("publicado")
+  ABERTO    @map("aberto")
+  ENCERRADO @map("encerrado")
+  REVOGADO  @map("revogado")
+  ANULADO   @map("anulado")
+  SUSPENSO  @map("suspenso")
+
+  @@map("pncp_edital_status")
+}
+
+model User {
+  id              String           @id @db.Uuid
+  email           String           @unique
+  fullName        String?
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  savedSearches   SavedSearch[]
+  searchHistory   SearchHistory[]
+  favoriteNotices FavoriteNotice[]
+  conversations   AIConversation[]
+  alertRules      AlertRule[]
+  notifications   Notification[]
+  auditLogs       AuditLog[]
+  trainingRules   AITrainingRule[]
+  analyzerReports AnalyzerReport[]
+
+  @@map("profiles")
+}
+
+model SavedSearch {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String
+  filtersJson Json     @map("filters_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("saved_searches")
+}
+
+model SearchHistory {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  query       String?
+  filtersJson Json     @map("filters_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("search_history")
+}
+
+model FavoriteNotice {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  noticeId  String   @map("notice_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notice    Notice   @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, noticeId])
+  @@index([noticeId])
+  @@map("favorite_notices")
+}
+
+model Notice {
+  id                String              @id @default(uuid()) @db.Uuid
+  sourceId          String              @map("source_id") @db.Uuid
+  externalId        String              @map("external_id")
+  identifier        String?
+  processNumber     String?             @map("process_number")
+  agency            String
+  state             String?
+  city              String?
+  object            String
+  modality          String
+  status            String
+  procurementType   String?             @map("procurement_type")
+  publishedAt       DateTime?           @map("published_at")
+  openingAt         DateTime?           @map("opening_at")
+  closingAt         DateTime?           @map("closing_at")
+  estimatedValue    Decimal?            @map("estimated_value") @db.Decimal(18, 2)
+  complementaryInfo String?             @map("complementary_info")
+  justification     String?
+  rawPayload        Json?               @map("raw_payload")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  source            NoticeSource        @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  attachments       NoticeAttachment[]
+  syncLogs          NoticeSyncLog[]
+  favoriteNotices   FavoriteNotice[]
+
+  @@unique([sourceId, externalId])
+  @@index([status, closingAt])
+  @@index([state, city])
+  @@index([publishedAt(sort: Desc)])
+  @@map("notices")
+}
+
+model NoticeAttachment {
+  id                  String   @id @default(uuid()) @db.Uuid
+  noticeId            String   @map("notice_id") @db.Uuid
+  externalId          String?  @map("external_id")
+  fileName            String   @map("file_name")
+  mimeType            String?  @map("mime_type")
+  fileSizeBytes       Int?     @map("file_size_bytes")
+  sourceUrl           String   @map("source_url")
+  storagePath         String?  @map("storage_path")
+  extractedTextStatus String?  @map("extracted_text_status")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  notice              Notice   @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId])
+  @@map("notice_attachments")
+}
+
+model NoticeSource {
+  id        String          @id @default(uuid()) @db.Uuid
+  key       String          @unique
+  name      String
+  baseUrl   String          @map("base_url")
+  isActive  Boolean         @default(true) @map("is_active")
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  notices   Notice[]
+  syncLogs  NoticeSyncLog[]
+
+  @@map("notice_sources")
+}
+
+model NoticeSyncLog {
+  id         String       @id @default(uuid()) @db.Uuid
+  noticeId   String?      @map("notice_id") @db.Uuid
+  sourceId   String       @map("source_id") @db.Uuid
+  syncType   String       @map("sync_type")
+  status     String
+  detail     String?
+  startedAt  DateTime     @default(now()) @map("started_at")
+  finishedAt DateTime?    @map("finished_at")
+  notice     Notice?      @relation(fields: [noticeId], references: [id], onDelete: SetNull)
+  source     NoticeSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@index([sourceId, startedAt(sort: Desc)])
+  @@map("notice_sync_logs")
+}
+
+model NoticeChunk {
+  id           String   @id @default(uuid()) @db.Uuid
+  noticeId     String   @map("notice_id") @db.Uuid
+  attachmentId String?  @map("attachment_id") @db.Uuid
+  chunkIndex   Int      @map("chunk_index")
+  content      String
+  tokens       Int?
+  createdAt    DateTime @default(now()) @map("created_at")
+  notice       PncpEdital @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@unique([noticeId, chunkIndex])
+  @@map("notice_chunks")
+}
+
+model NoticeEmbedding {
+  id         String                @id @default(uuid()) @db.Uuid
+  noticeId   String                @map("notice_id") @db.Uuid
+  chunkId    String?               @map("chunk_id") @db.Uuid
+  model      String
+  dimensions Int
+  embedding  Unsupported("vector")
+  createdAt  DateTime              @default(now()) @map("created_at")
+  notice     PncpEdital            @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId])
+  @@map("notice_embeddings")
+}
+
+model AIConversation {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @map("user_id") @db.Uuid
+  noticeId  String      @map("notice_id") @db.Uuid
+  title     String?
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notice    PncpEdital  @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  messages  AIMessage[]
+
+  @@index([userId, updatedAt(sort: Desc)])
+  @@map("ai_conversations")
+}
+
+model AIMessage {
+  id             String         @id @default(uuid()) @db.Uuid
+  conversationId String         @map("conversation_id") @db.Uuid
+  role           String
+  content        String
+  citationsJson  Json?          @map("citations_json")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AITrainingRule {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  content   String
+  isActive  Boolean  @default(true) @map("is_active")
+  priority  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@map("ai_training_rules")
+}
+
+model AlertRule {
+  id            String         @id @default(uuid()) @db.Uuid
+  userId        String         @map("user_id") @db.Uuid
+  name          String
+  filtersJson   Json           @map("filters_json")
+  channel       String
+  frequency     String
+  isActive      Boolean        @default(true) @map("is_active")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@index([userId, isActive])
+  @@map("alert_rules")
+}
+
+model Notification {
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String     @map("user_id") @db.Uuid
+  alertRuleId String?    @map("alert_rule_id") @db.Uuid
+  title       String
+  body        String
+  channel     String
+  readAt      DateTime?  @map("read_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alertRule   AlertRule? @relation(fields: [alertRuleId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String?  @map("entity_id")
+  metadata   Json?    @map("metadata_json")
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model PncpEdital {
+  id                       String    @id @default(uuid()) @db.Uuid
+  pncpId                   String    @unique @map("pncp_id")
+  numeroControlePncp       String?   @map("numero_controle_pncp")
+  numeroCompra             String?   @map("numero_compra")
+  anoCompra                Int?      @map("ano_compra")
+  sequencialCompra         Int?      @map("sequencial_compra")
+  cnpjOrgao                String    @map("cnpj_orgao")
+  nomeOrgao                String?   @map("nome_orgao")
+  siglaOrgao               String?   @map("sigla_orgao")
+  cnpjUnidade              String?   @map("cnpj_unidade")
+  nomeUnidade              String?   @map("nome_unidade")
+  municipioNome            String?   @map("municipio_nome")
+  municipioIbge            String?   @map("municipio_ibge")
+  uf                       String?   @db.Char(2)
+  ufNome                   String?   @map("uf_nome")
+  codigoModalidade         String    @map("codigo_modalidade_contratacao")
+  modalidadeNome           String?   @map("modalidade_nome")
+  modoDisputaCodigo        Int?      @map("modo_disputa_codigo")
+  modoDisputaNome          String?   @map("modo_disputa_nome")
+  situacaoCodigo           Int?      @map("situacao_codigo")
+  situacaoNome             String?   @map("situacao_nome")
+  status                   PncpEditalStatus?
+  valorTotalEstimado       Decimal?  @map("valor_total_estimado") @db.Decimal(18, 2)
+  valorTotalHomologado     Decimal?  @map("valor_total_homologado") @db.Decimal(18, 2)
+  dataPublicacaoPncp       DateTime? @map("data_publicacao_pncp")
+  dataAberturaProposta     DateTime? @map("data_abertura_proposta")
+  dataEncerramentoProposta DateTime? @map("data_encerramento_proposta")
+  dataUltimaAtualizacao    DateTime? @map("data_ultima_atualizacao_pncp")
+  objetoCompra             String?   @map("objeto_compra")
+  informacaoComplementar   String?   @map("informacao_complementar")
+  justificativa            String?
+  linkSistemaOrigem        String?   @map("link_sistema_origem")
+  linkEdital               String?   @map("link_edital")
+  portalUrl                String?   @map("portal_url")
+  isPublishedOnPncp        Boolean?  @map("is_published_on_pncp")
+  validatedAt              DateTime? @map("validated_at")
+  rawPayload               Json?     @map("raw_payload")
+  fetchedFromPncpAt        DateTime? @map("fetched_from_pncp_at")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+  chunks                   NoticeChunk[]
+  embeddings               NoticeEmbedding[]
+  conversations            AIConversation[]
+  analyzerReports          AnalyzerReport[]
+
+  @@index([uf, municipioNome])
+  @@index([dataEncerramentoProposta])
+  @@index([status])
+  @@index([isPublishedOnPncp, validatedAt(sort: Desc)])
+  @@map("pncp_editais")
+}
+
+model AnalyzerReport {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  noticeId   String   @map("notice_id") @db.Uuid
+  resumo     Json?    @db.JsonB
+  riscos     Json?    @db.JsonB
+  precos     Json?    @db.JsonB
+  documentos Json?    @db.JsonB
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  user   User       @relation(fields: [userId], references: [id])
+  notice PncpEdital @relation(fields: [noticeId], references: [id])
+
+  @@unique([userId, noticeId])
+  @@map("analyzer_reports")
+}

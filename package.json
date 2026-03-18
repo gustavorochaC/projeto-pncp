@@ -1,0 +1,27 @@
+{
+  "name": "pncp-intelligence-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "npm@10.9.2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "setup": "npm install",
+    "bootstrap": "node scripts/bootstrap.mjs",
+    "postinstall": "node scripts/ensure-prisma-client.mjs",
+    "dev": "turbo run dev --parallel",
+    "dev:full": "node scripts/dev-full.mjs",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "turbo": "^2.3.4",
+    "typescript": "^5.8.2"
+  }
+}

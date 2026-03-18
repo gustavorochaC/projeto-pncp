@@ -1,0 +1,17 @@
+node_modules
+.turbo
+.next
+.next-dev
+.next.rebuild-*
+dist
+coverage
+.env
+.env.*
+!.env.example
+*.log
+tmp
+*.tsbuildinfo
+.claude
+.cursor
+.superpowers
+%LOG%

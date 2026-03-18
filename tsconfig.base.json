@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "allowJs": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "@pncp/types": [
+        "packages/types/src"
+      ],
+      "@pncp/types/*": [
+        "packages/types/src/*"
+      ],
+      "@pncp/ui": [
+        "packages/ui/src"
+      ],
+      "@pncp/ui/*": [
+        "packages/ui/src/*"
+      ],
+      "@pncp/sdk": [
+        "packages/sdk/src"
+      ],
+      "@pncp/sdk/*": [
+        "packages/sdk/src/*"
+      ],
+      "@pncp/config/*": [
+        "packages/config/src/*"
+      ]
+    }
+  }
+}
