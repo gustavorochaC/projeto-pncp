@@ -112,6 +112,8 @@ Esse comando:
 - garante a geracao do Prisma Client
 - inicia o frontend e o backend
 
+Se houver uma instancia antiga do workspace segurando a engine do Prisma no Windows, o bootstrap tenta encerrar esses processos e refaz a geracao do Prisma Client automaticamente antes de abortar.
+
 ### Fluxo completo com dependencias locais
 
 Se quiser deixar o ambiente todo pronto com Redis e Ollama:
@@ -187,6 +189,7 @@ npm run test
 - paginas como favoritos, alertas e historico ja existem na interface, mas ainda dependem do amadurecimento da camada de persistencia para ficarem completas
 - o projeto foi preparado para rodar em dev, test e prod via variaveis de ambiente
 - se as portas `3000` ou `3001` estiverem ocupadas, os scripts de bootstrap falham para evitar conflito silencioso
+- no Windows, se um teste ou execucao anterior deixar a API antiga rodando e o Prisma acusar `EPERM` ao renomear `query_engine-windows.dll.node`, rode `npm run bootstrap` novamente: o script agora limpa arquivos temporarios, encerra processos antigos do workspace e tenta gerar o client mais uma vez
 
 ## Clonando este repositorio
 

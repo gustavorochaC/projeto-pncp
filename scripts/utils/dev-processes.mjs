@@ -129,6 +129,17 @@ async function stopProcessTree(processInfo) {
   } catch {}
 }
 
+export async function stopWorkspaceDevProcesses(rootDir) {
+  const workspaceProcesses = await listWorkspaceDevProcesses(rootDir);
+  const uniqueProcesses = [...new Map(workspaceProcesses.map((item) => [item.pid, item])).values()];
+
+  for (const processInfo of uniqueProcesses) {
+    await stopProcessTree(processInfo);
+  }
+
+  return uniqueProcesses;
+}
+
 async function waitForPortsToBeFree(ports, attempts = 20) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const busyPorts = await getBusyPorts(ports);
@@ -192,12 +203,7 @@ export async function ensureRequiredPortsAvailable(rootDir, ports) {
   }
 
   console.log("Detectei uma instancia anterior do projeto. Vou reiniciar os processos de desenvolvimento...");
-
-  const uniqueProcesses = [...new Map(workspaceProcesses.map((item) => [item.pid, item])).values()];
-
-  for (const processInfo of uniqueProcesses) {
-    await stopProcessTree(processInfo);
-  }
+  await stopWorkspaceDevProcesses(rootDir);
 
   const portsReleased = await waitForPortsToBeFree(ports);
 

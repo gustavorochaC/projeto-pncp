@@ -2,6 +2,7 @@ import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { stopWorkspaceDevProcesses } from "./utils/dev-processes.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptDir);
@@ -10,13 +11,36 @@ const prismaClientDir = join(rootDir, "node_modules", ".prisma", "client");
 const forceGenerate = process.argv.includes("--force");
 
 function run(command, args, options = {}) {
+  const { captureOutput = false, forwardOutput = false, ...spawnOptions } = options;
+
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: rootDir,
-      stdio: "inherit",
+      stdio: captureOutput ? ["inherit", "pipe", "pipe"] : "inherit",
       shell: false,
-      ...options
+      ...spawnOptions
     });
+
+    let stdout = "";
+    let stderr = "";
+
+    if (captureOutput) {
+      child.stdout.on("data", (chunk) => {
+        const value = String(chunk);
+        stdout += value;
+        if (forwardOutput) {
+          process.stdout.write(value);
+        }
+      });
+
+      child.stderr.on("data", (chunk) => {
+        const value = String(chunk);
+        stderr += value;
+        if (forwardOutput) {
+          process.stderr.write(value);
+        }
+      });
+    }
 
     child.on("error", reject);
     child.on("exit", (code) => {
@@ -25,7 +49,8 @@ function run(command, args, options = {}) {
         return;
       }
 
-      reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
+      const capturedMessage = `${stderr}\n${stdout}`.trim();
+      reject(new Error(capturedMessage || `${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
     });
   });
 }
@@ -85,6 +110,43 @@ function shouldGeneratePrismaClient() {
   return statSync(prismaSchemaPath).mtimeMs > statSync(generatedSchemaPath).mtimeMs;
 }
 
+function isRecoverablePrismaEngineError(error) {
+  if (process.platform !== "win32") {
+    return false;
+  }
+
+  return (
+    error instanceof Error &&
+    error.message.includes("EPERM: operation not permitted, rename") &&
+    error.message.includes("query_engine-windows.dll.node")
+  );
+}
+
+async function generatePrismaClient() {
+  try {
+    await runShell("npm run --workspace api prisma:generate:raw", { captureOutput: true });
+    return;
+  } catch (error) {
+    if (!isRecoverablePrismaEngineError(error)) {
+      throw error;
+    }
+
+    console.log(
+      "Detectei a engine do Prisma travada por um processo antigo do workspace. Vou encerrar esses processos e tentar novamente..."
+    );
+
+    const stoppedProcesses = await stopWorkspaceDevProcesses(rootDir);
+
+    if (stoppedProcesses.length === 0) {
+      throw error;
+    }
+
+    cleanupPrismaTempFiles();
+    await runShell("npm run --workspace api prisma:generate:raw", { captureOutput: true });
+    console.log("Prisma Client gerado com sucesso apos encerrar processos antigos do workspace.");
+  }
+}
+
 async function main() {
   cleanupPrismaTempFiles();
 
@@ -94,7 +156,7 @@ async function main() {
   }
 
   console.log("Prisma Client ausente ou desatualizado. Gerando novamente...");
-  await runShell("npm run --workspace api prisma:generate:raw");
+  await generatePrismaClient();
 }
 
 main().catch((error) => {
