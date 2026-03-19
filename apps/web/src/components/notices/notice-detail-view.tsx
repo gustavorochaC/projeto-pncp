@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -19,6 +20,7 @@ import TableRow from "@mui/material/TableRow";
 import Tabs from "@mui/material/Tabs";
 import Typography from "@mui/material/Typography";
 import Grid from "@mui/material/Grid2";
+import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import ArticleOutlinedIcon from "@mui/icons-material/ArticleOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
@@ -29,6 +31,11 @@ import { NoticeStatusBadge } from "@/components/notices/notice-status-badge";
 import { useNotice } from "@/hooks/use-notice";
 import { useNoticeItems } from "@/hooks/use-notice-items";
 import { useNoticeArchives } from "@/hooks/use-notice-archives";
+import {
+  appendHighlightToReturnTo,
+  NOTICE_RETURN_TO_PARAM,
+  resolveSafeReturnTo,
+} from "@/lib/notice-navigation";
 
 function fmt(iso?: string | null): string {
   if (!iso) return "—";
@@ -399,6 +406,8 @@ function TabHistorico({ notice }: { notice: ReturnType<typeof useNotice>["data"]
 export function NoticeDetailView({ id }: { id: string }) {
   const [tab, setTab] = useState(0);
   const [aiDrawerOpen, setAiDrawerOpen] = useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const noticeQuery = useNotice(id);
 
   if (noticeQuery.isLoading) {
@@ -418,12 +427,33 @@ export function NoticeDetailView({ id }: { id: string }) {
   }
 
   const notice = noticeQuery.data;
+  const returnTo = resolveSafeReturnTo(searchParams.get(NOTICE_RETURN_TO_PARAM));
+
+  const handleGoBack = () => {
+    if (returnTo) {
+      router.push(appendHighlightToReturnTo(returnTo, notice.id));
+      return;
+    }
+
+    router.push("/dashboard");
+  };
 
   return (
     <Stack spacing={3}>
       {/* Header */}
       <Paper sx={{ p: 3, borderTop: "3px solid", borderColor: "primary.main" }} component="article" aria-label="Detalhes do edital">
         <Stack spacing={2}>
+          <Box>
+            <Button
+              variant="text"
+              color="inherit"
+              startIcon={<ArrowBackOutlinedIcon aria-hidden />}
+              onClick={handleGoBack}
+              sx={{ px: 0, minWidth: "auto" }}
+            >
+              Voltar para a lista
+            </Button>
+          </Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
             <NoticeStatusBadge status={notice.status} />
           </Box>

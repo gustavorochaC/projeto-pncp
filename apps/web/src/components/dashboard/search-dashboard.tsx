@@ -20,33 +20,61 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import type { NoticeSearchFilters } from "@pncp/types";
 import { useNotices } from "@/hooks/use-notices";
 import { NoticeCardList } from "@/components/notices/notice-card-list";
+import {
+  buildNoticeSearchParams,
+  defaultNoticeFilters,
+} from "@/lib/notice-navigation";
 
-const defaultFilters: NoticeSearchFilters = {
-  query: "",
-  state: "",
-  city: "",
-  modality: "",
-  page: 1,
-  pageSize: 20,
-  sort: "publishedAt:desc",
-};
+interface SearchDashboardProps {
+  initialFilters: NoticeSearchFilters;
+  initialHighlightNoticeId?: string | null;
+}
 
-export function SearchDashboard() {
-  const [filters, setFilters] = useState<NoticeSearchFilters>(defaultFilters);
+export function SearchDashboard({
+  initialFilters,
+  initialHighlightNoticeId = null,
+}: SearchDashboardProps) {
+  const [filters, setFilters] = useState<NoticeSearchFilters>(initialFilters);
+  const [highlightedNoticeId, setHighlightedNoticeId] = useState<string | null>(
+    initialHighlightNoticeId,
+  );
   const deferredQuery = useDeferredValue(filters.query);
 
   useEffect(() => {
-    const searchParams = new URLSearchParams();
-    Object.entries(filters).forEach(([key, value]) => {
-      if (!value) return;
-      searchParams.set(key, String(value));
-    });
+    const searchParams = buildNoticeSearchParams(filters);
     const queryString = searchParams.toString();
     window.history.replaceState(null, "", queryString ? `?${queryString}` : window.location.pathname);
   }, [filters]);
 
   const effectiveFilters = { ...filters, query: deferredQuery };
   const noticesQuery = useNotices(effectiveFilters);
+
+  useEffect(() => {
+    if (!highlightedNoticeId || !noticesQuery.data?.items.length) {
+      return;
+    }
+
+    const targetElement = document.querySelector<HTMLElement>(
+      `[data-notice-id="${highlightedNoticeId}"]`,
+    );
+
+    if (!targetElement) {
+      return;
+    }
+
+    targetElement.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+
+    const timeoutId = window.setTimeout(() => {
+      setHighlightedNoticeId(null);
+    }, 2400);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [highlightedNoticeId, noticesQuery.data]);
 
   return (
     <Stack spacing={3}>
@@ -144,7 +172,13 @@ export function SearchDashboard() {
             >
               Somente em aberto
             </Button>
-            <Button variant="text" onClick={() => setFilters(defaultFilters)}>
+            <Button
+              variant="text"
+              onClick={() => {
+                setFilters(defaultNoticeFilters);
+                setHighlightedNoticeId(null);
+              }}
+            >
               Limpar filtros
             </Button>
           </Stack>
@@ -173,7 +207,10 @@ export function SearchDashboard() {
           }}
         >
           <Stack spacing={2}>
-            <NoticeCardList items={noticesQuery.data.items} />
+            <NoticeCardList
+              items={noticesQuery.data.items}
+              highlightedNoticeId={highlightedNoticeId}
+            />
             <Paper sx={{ p: 2.5, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 2 }}>
             <Typography variant="body2" color="text.secondary">
               Página {noticesQuery.data.page} de {noticesQuery.data.totalPages} · {noticesQuery.data.total} resultados
