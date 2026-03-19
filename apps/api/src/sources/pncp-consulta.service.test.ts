@@ -94,6 +94,44 @@ describe("PncpConsultaService", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(result.kind).toBe("transient_failure");
   });
+
+  it("fetches all item pages using pagina and tamanhoPagina", async () => {
+    const buildItems = (start: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        numeroItem: start + index,
+        descricao: `Item ${start + index}`,
+        materialOuServico: "M",
+        materialOuServicoNome: "Material",
+        valorUnitarioEstimado: null,
+        valorTotal: null,
+        quantidade: null,
+        unidadeMedida: null,
+        criterioJulgamentoNome: null,
+        situacaoCompraItemNome: null,
+        temResultado: false
+      }));
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(buildItems(1, 50)), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(buildItems(51, 7)), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const service = new PncpConsultaService();
+    const result = await service.getItens({
+      cnpjOrgao: "13891536000196",
+      anoCompra: 2026,
+      sequencialCompra: 11
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("pagina=1");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("tamanhoPagina=50");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("pagina=2");
+    expect(result).toHaveLength(57);
+    expect(result[0]?.numeroItem).toBe(1);
+    expect(result[56]?.numeroItem).toBe(57);
+  });
 });
 
 function restoreEnv(key: string, value: string | undefined) {

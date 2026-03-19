@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -7,11 +9,16 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import OpenInNewOutlinedIcon from "@mui/icons-material/OpenInNewOutlined";
 import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { NoticeListItem } from "@pncp/types";
+import {
+  buildNoticeDetailHref,
+  buildReturnTo,
+} from "@/lib/notice-navigation";
 import { NoticeStatusBadge } from "./notice-status-badge";
 
 function fmtDate(iso?: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   return new Intl.DateTimeFormat("pt-BR", {
     day: "2-digit",
     month: "2-digit",
@@ -36,23 +43,36 @@ function MetaRow({ items }: { items: [string, string][] }) {
   );
 }
 
-function NoticeCard({ notice }: { notice: NoticeListItem }) {
+function NoticeCard({
+  notice,
+  href,
+  isHighlighted,
+}: {
+  notice: NoticeListItem;
+  href: string;
+  isHighlighted: boolean;
+}) {
   const title = notice.noticeNumber
-    ? `${notice.modality} nº ${notice.noticeNumber}`
+    ? `${notice.modality} n.\u00ba ${notice.noticeNumber}`
     : notice.modality;
 
   const location =
     notice.city && notice.state
       ? `${notice.city} - ${notice.state}`
-      : notice.state ?? notice.city ?? "—";
+      : notice.state ?? notice.city ?? "-";
 
   return (
     <Paper
       variant="outlined"
+      data-notice-id={notice.id}
       sx={{
         p: 2.5,
         borderRadius: 2,
-        transition: "box-shadow 0.15s ease",
+        borderColor: isHighlighted ? "primary.main" : "divider",
+        boxShadow: isHighlighted ? 4 : 0,
+        bgcolor: isHighlighted ? "rgba(25, 118, 210, 0.08)" : "background.paper",
+        transition:
+          "box-shadow 0.15s ease, border-color 0.15s ease, background-color 0.15s ease",
         "&:hover": { boxShadow: 3 },
       }}
     >
@@ -70,18 +90,18 @@ function NoticeCard({ notice }: { notice: NoticeListItem }) {
           </Box>
         </Typography>
 
-        {/* Line 3: Modalidade + Última atualização */}
+        {/* Line 3: Modalidade + Ultima atualizacao */}
         <MetaRow
           items={[
             ["Modalidade", notice.modality],
-            ["Última atualização", fmtDate(notice.updatedAt)],
+            ["\u00daltima atualiza\u00e7\u00e3o", fmtDate(notice.updatedAt)],
           ]}
         />
 
-        {/* Line 4: Órgão + Local */}
+        {/* Line 4: Orgao + Local */}
         <MetaRow
           items={[
-            ["Órgão", notice.agency],
+            ["\u00d3rg\u00e3o", notice.agency],
             ["Local", location],
           ]}
         />
@@ -102,7 +122,7 @@ function NoticeCard({ notice }: { notice: NoticeListItem }) {
           <Box sx={{ flex: 1 }} />
           <Button
             component={Link}
-            href={`/notices/${notice.id}`}
+            href={href}
             variant="outlined"
             size="small"
             startIcon={<OpenInNewOutlinedIcon fontSize="small" aria-hidden />}
@@ -115,9 +135,9 @@ function NoticeCard({ notice }: { notice: NoticeListItem }) {
             size="small"
             color="info"
             startIcon={<SmartToyOutlinedIcon fontSize="small" aria-hidden />}
-            aria-label="Perguntar à IA sobre este edital"
+            aria-label="Perguntar \u00e0 IA sobre este edital"
           >
-            Perguntar à IA
+            Perguntar \u00e0 IA
           </Button>
         </Box>
       </Stack>
@@ -125,11 +145,26 @@ function NoticeCard({ notice }: { notice: NoticeListItem }) {
   );
 }
 
-export function NoticeCardList({ items }: { items: NoticeListItem[] }) {
+export function NoticeCardList({
+  items,
+  highlightedNoticeId,
+}: {
+  items: NoticeListItem[];
+  highlightedNoticeId?: string | null;
+}) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const returnTo = buildReturnTo(pathname, searchParams);
+
   return (
     <Stack spacing={2}>
       {items.map((notice) => (
-        <NoticeCard key={notice.id} notice={notice} />
+        <NoticeCard
+          key={notice.id}
+          notice={notice}
+          href={buildNoticeDetailHref(notice.id, returnTo)}
+          isHighlighted={notice.id === highlightedNoticeId}
+        />
       ))}
     </Stack>
   );

@@ -98,6 +98,8 @@ export type PncpConsultaResult =
 
 @Injectable()
 export class PncpConsultaService {
+  private static readonly ARRAY_PAGE_SIZE = 50;
+  private static readonly MAX_ARRAY_PAGES = 100;
   private readonly logger = new Logger(PncpConsultaService.name);
   private readonly baseUrl = (process.env.PNCP_BASE_URL ?? "https://pncp.gov.br/api/consulta").replace(
     /\/+$/,
@@ -115,13 +117,24 @@ export class PncpConsultaService {
   }
 
   async getItens(params: PncpConsultaItemParams): Promise<PncpConsultaItem[]> {
-    const url = `${this.pncpApiBaseUrl}/v1/orgaos/${params.cnpjOrgao}/compras/${params.anoCompra}/${params.sequencialCompra}/itens`;
-    return this.fetchArrayWithRetry<PncpConsultaItem>(url);
+    return this.fetchPaginatedArrayWithRetry<PncpConsultaItem>(
+      this.buildCompraSubresourceUrl(params, "itens")
+    );
   }
 
   async getArquivos(params: PncpConsultaItemParams): Promise<PncpConsultaArquivo[]> {
-    const url = `${this.pncpApiBaseUrl}/v1/orgaos/${params.cnpjOrgao}/compras/${params.anoCompra}/${params.sequencialCompra}/arquivos`;
-    return this.fetchArrayWithRetry<PncpConsultaArquivo>(url);
+    return this.fetchPaginatedArrayWithRetry<PncpConsultaArquivo>(
+      this.buildCompraSubresourceUrl(params, "arquivos")
+    );
+  }
+
+  private buildCompraSubresourceUrl(
+    params: PncpConsultaItemParams,
+    resource: "itens" | "arquivos"
+  ): URL {
+    return new URL(
+      `${this.pncpApiBaseUrl}/v1/orgaos/${params.cnpjOrgao}/compras/${params.anoCompra}/${params.sequencialCompra}/${resource}`
+    );
   }
 
   private async fetchCompraWithRetry(url: string): Promise<PncpConsultaResult> {
@@ -227,13 +240,51 @@ export class PncpConsultaService {
     };
   }
 
-  private async fetchArrayWithRetry<T>(url: string): Promise<T[]> {
+  private async fetchPaginatedArrayWithRetry<T>(baseUrl: URL): Promise<T[]> {
+    const items: T[] = [];
+
+    for (let page = 1; page <= PncpConsultaService.MAX_ARRAY_PAGES; page += 1) {
+      const pageItems = await this.fetchArrayPageWithRetry<T>(
+        baseUrl,
+        page,
+        PncpConsultaService.ARRAY_PAGE_SIZE
+      );
+
+      if (pageItems.length === 0) {
+        break;
+      }
+
+      items.push(...pageItems);
+
+      if (pageItems.length < PncpConsultaService.ARRAY_PAGE_SIZE) {
+        return items;
+      }
+    }
+
+    if (items.length > 0) {
+      this.logger.warn(
+        `PNCP array endpoint atingiu o limite de ${PncpConsultaService.MAX_ARRAY_PAGES} paginas em ${baseUrl.pathname}.`
+      );
+    }
+
+    return items;
+  }
+
+  private async fetchArrayPageWithRetry<T>(
+    baseUrl: URL,
+    page: number,
+    pageSize: number
+  ): Promise<T[]> {
+    const url = new URL(baseUrl.toString());
+    url.searchParams.set("pagina", String(page));
+    url.searchParams.set("tamanhoPagina", String(pageSize));
+
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const response = await fetch(url, {
+        const response = await fetch(url.toString(), {
           method: "GET",
           headers: {
             Accept: "application/json",
@@ -249,7 +300,7 @@ export class PncpConsultaService {
             await this.sleep(this.getRetryDelayMs(attempt));
             continue;
           }
-          this.logger.debug(`PNCP array endpoint respondeu ${response.status} para ${url}`);
+          this.logger.debug(`PNCP array endpoint respondeu ${response.status} para ${url.toString()}`);
           return [];
         }
 
@@ -258,12 +309,12 @@ export class PncpConsultaService {
         try {
           payload = JSON.parse(payloadText);
         } catch {
-          this.logger.debug(`PNCP array endpoint retornou JSON invalido para ${url}`);
+          this.logger.debug(`PNCP array endpoint retornou JSON invalido para ${url.toString()}`);
           return [];
         }
 
         if (!Array.isArray(payload)) {
-          this.logger.debug(`PNCP array endpoint retornou payload inesperado para ${url}`);
+          this.logger.debug(`PNCP array endpoint retornou payload inesperado para ${url.toString()}`);
           return [];
         }
 
@@ -274,7 +325,7 @@ export class PncpConsultaService {
           await this.sleep(this.getRetryDelayMs(attempt));
           continue;
         }
-        this.logger.debug(`Falha de rede em ${url}: ${stringifyUnknown(error)}`);
+        this.logger.debug(`Falha de rede em ${url.toString()}: ${stringifyUnknown(error)}`);
         return [];
       }
     }

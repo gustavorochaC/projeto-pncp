@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -10,12 +12,36 @@ import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import OpenInNewOutlinedIcon from "@mui/icons-material/OpenInNewOutlined";
 import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
+import { usePathname, useSearchParams } from "next/navigation";
 import type { NoticeListItem } from "@pncp/types";
+import {
+  buildNoticeDetailHref,
+  buildReturnTo,
+} from "@/lib/notice-navigation";
 import { NoticeStatusBadge } from "./notice-status-badge";
 
-const headers = ["Órgão", "Objeto", "Modalidade", "Publicação", "Abertura", "Valor", "Status", "Ações"];
+const headers = [
+  "\u00d3rg\u00e3o",
+  "Objeto",
+  "Modalidade",
+  "Publica\u00e7\u00e3o",
+  "Abertura",
+  "Valor",
+  "Status",
+  "A\u00e7\u00f5es",
+];
 
-export function NoticeTable({ items }: { items: NoticeListItem[] }) {
+export function NoticeTable({
+  items,
+  highlightedNoticeId,
+}: {
+  items: NoticeListItem[];
+  highlightedNoticeId?: string | null;
+}) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const returnTo = buildReturnTo(pathname, searchParams);
+
   return (
     <TableContainer component={Paper} sx={{ overflow: "hidden", borderRadius: 2 }}>
       <Table size="medium" stickyHeader>
@@ -47,9 +73,18 @@ export function NoticeTable({ items }: { items: NoticeListItem[] }) {
             <TableRow
               key={notice.id}
               hover
+              data-notice-id={notice.id}
               sx={{
                 transition: "background-color 0.15s ease",
-                "&:nth-of-type(even)": { bgcolor: "rgba(0,0,0,0.02)" },
+                "&:nth-of-type(even)": {
+                  bgcolor:
+                    notice.id === highlightedNoticeId
+                      ? "rgba(25, 118, 210, 0.08)"
+                      : "rgba(0,0,0,0.02)",
+                },
+                ...(notice.id === highlightedNoticeId && {
+                  bgcolor: "rgba(25, 118, 210, 0.08)",
+                }),
               }}
             >
               <TableCell sx={{ fontWeight: 500, py: 1.5, px: 2 }}>{notice.agency}</TableCell>
@@ -59,7 +94,10 @@ export function NoticeTable({ items }: { items: NoticeListItem[] }) {
               <TableCell sx={{ py: 1.5, px: 2 }}>{notice.openingAt?.slice(0, 10) ?? "-"}</TableCell>
               <TableCell sx={{ py: 1.5, px: 2 }}>
                 {notice.estimatedValue
-                  ? notice.estimatedValue.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+                  ? notice.estimatedValue.toLocaleString("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    })
                   : "-"}
               </TableCell>
               <TableCell sx={{ py: 1.5, px: 2 }}>
@@ -69,7 +107,7 @@ export function NoticeTable({ items }: { items: NoticeListItem[] }) {
                 <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                   <Button
                     component={Link}
-                    href={`/notices/${notice.id}`}
+                    href={buildNoticeDetailHref(notice.id, returnTo)}
                     variant="outlined"
                     size="small"
                     startIcon={<OpenInNewOutlinedIcon fontSize="small" aria-hidden />}
@@ -82,9 +120,9 @@ export function NoticeTable({ items }: { items: NoticeListItem[] }) {
                     size="small"
                     color="info"
                     startIcon={<SmartToyOutlinedIcon fontSize="small" aria-hidden />}
-                    aria-label="Perguntar à IA sobre este edital"
+                    aria-label="Perguntar \u00e0 IA sobre este edital"
                   >
-                    Perguntar à IA
+                    Perguntar \u00e0 IA
                   </Button>
                 </Box>
               </TableCell>
