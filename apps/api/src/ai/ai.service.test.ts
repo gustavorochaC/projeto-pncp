@@ -1,11 +1,12 @@
 import { GatewayTimeoutException, ServiceUnavailableException } from "@nestjs/common";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { PrismaService } from "../common/prisma.service";
+import type { ParticipationRequirementsService } from "./participation-requirements.service";
 import type { EmbeddingService } from "./rag/embedding.service";
 import { AIService } from "./ai.service";
 
 const mockFindUniqueOrThrow = vi.fn();
-const mockChunkCount = vi.fn();
+const mockEmbeddingCount = vi.fn();
 const mockTrainingRulesFindMany = vi.fn();
 const mockMessagesFindMany = vi.fn();
 const mockConversationCreate = vi.fn();
@@ -15,13 +16,14 @@ const mockUserFindFirst = vi.fn();
 
 const mockGenerateEmbedding = vi.fn();
 const mockSearchSimilarChunks = vi.fn();
+const mockParticipationGetOrGenerateAnalysis = vi.fn();
 
 const prisma = {
   pncpEdital: {
     findUniqueOrThrow: mockFindUniqueOrThrow,
   },
-  noticeChunk: {
-    count: mockChunkCount,
+  noticeEmbedding: {
+    count: mockEmbeddingCount,
   },
   aITrainingRule: {
     findMany: mockTrainingRulesFindMany,
@@ -44,8 +46,12 @@ const embeddingService = {
   searchSimilarChunks: mockSearchSimilarChunks,
 } as unknown as EmbeddingService;
 
+const participationRequirementsService = {
+  getOrGenerateAnalysis: mockParticipationGetOrGenerateAnalysis,
+} as unknown as ParticipationRequirementsService;
+
 function buildService() {
-  return new AIService(prisma, embeddingService);
+  return new AIService(prisma, embeddingService, participationRequirementsService);
 }
 
 beforeEach(() => {
@@ -68,7 +74,7 @@ beforeEach(() => {
     linkSistemaOrigem: "https://example.com/origem",
     rawPayload: {},
   });
-  mockChunkCount.mockResolvedValue(0);
+  mockEmbeddingCount.mockResolvedValue(0);
   mockTrainingRulesFindMany.mockResolvedValue([]);
   mockMessagesFindMany.mockResolvedValue([]);
   mockConversationCreate.mockResolvedValue({
@@ -81,6 +87,41 @@ beforeEach(() => {
   });
   mockGenerateEmbedding.mockResolvedValue([0.1, 0.2, 0.3]);
   mockSearchSimilarChunks.mockResolvedValue([]);
+  mockParticipationGetOrGenerateAnalysis.mockResolvedValue({
+    sectionResult: {
+      content: "Encontrei 2 requisitos explicitos de participacao.",
+      generatedAt: "2026-03-19T10:00:00.000Z",
+      confidence: "high",
+      metadata: {},
+    },
+    structuredData: {
+      kind: "participation_requirements",
+      explicitRequirements: [
+        {
+          category: "qualificacao_tecnica",
+          subcategory: "atestado_capacidade_tecnica",
+          requirement: "Apresentar atestado compativel com o objeto.",
+          normalizedTerm: "atestado_capacidade_tecnica",
+          mandatoryLevel: "mandatory",
+          appliesTo: "todos_licitantes",
+          sourceDocument: "Edital Principal.pdf",
+          evidenceExcerpt: "Apresentar atestado compativel com o objeto.",
+          confidence: "high",
+        },
+      ],
+      possibleInferences: [],
+      missingEvidence: [],
+      documentsReviewed: ["Edital Principal.pdf"],
+      analysisNotes: [],
+    },
+    citations: [
+      {
+        title: "Edital Principal.pdf",
+        excerpt: "Apresentar atestado compativel com o objeto.",
+      },
+    ],
+    hasProcessedChunks: true,
+  });
 
   vi.stubGlobal(
     "fetch",
@@ -172,6 +213,41 @@ describe("AIService.answerNoticeQuestion", () => {
         data: expect.objectContaining({
           userId: "44444444-4444-4444-8444-444444444444",
         }),
+      }),
+    );
+  });
+
+  it("usa a extracao estruturada quando o chat pede requisitos de participacao", async () => {
+    const service = buildService();
+
+    const result = await service.answerNoticeQuestion(
+      "11111111-1111-4111-8111-111111111111",
+      {
+        question: "Extrair requisitos de participacao e habilitacao deste edital.",
+        mode: "participation_requirements",
+      },
+    );
+
+    expect(mockParticipationGetOrGenerateAnalysis).toHaveBeenCalledWith(
+      "11111111-1111-4111-8111-111111111111",
+      "33333333-3333-4333-8333-333333333333",
+    );
+    expect(result.structuredData?.kind).toBe("participation_requirements");
+    expect(result.answer).toContain("Encontrei 2 requisitos explicitos");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mockMessageCreateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([
+          expect.objectContaining({
+            role: "assistant",
+            metadataJson: expect.objectContaining({
+              confidence: "high",
+              structuredData: expect.objectContaining({
+                kind: "participation_requirements",
+              }),
+            }),
+          }),
+        ]),
       }),
     );
   });

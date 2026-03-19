@@ -15,6 +15,8 @@ import {
   buildStructuredNoticeAnswer,
   shouldUseStructuredNoticeAnswer,
 } from './ai-structured-response.util';
+import { ParticipationRequirementsService } from './participation-requirements.service';
+import { PARTICIPATION_REQUIREMENTS_MODE } from './participation-requirements.util';
 import { EmbeddingService } from './rag/embedding.service';
 
 const PLACEHOLDER_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -34,16 +36,47 @@ export class AIService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly embeddingService: EmbeddingService,
+    private readonly participationRequirementsService: ParticipationRequirementsService,
   ) {}
 
   async answerNoticeQuestion(
     noticeId: string,
     payload: AskAIDto,
   ): Promise<AskAIResponse> {
-    const [edital, hasProcessedChunks, chatUserId] = await Promise.all([
+    const mode = payload.mode ?? 'default';
+    const chatUserId = await this.resolveChatUserId(payload.userId);
+
+    if (mode === PARTICIPATION_REQUIREMENTS_MODE) {
+      const analysis = await this.participationRequirementsService.getOrGenerateAnalysis(
+        noticeId,
+        chatUserId,
+      );
+      const conversationId = await this.persistConversation({
+        conversationId: payload.conversationId,
+        userId: chatUserId,
+        noticeId,
+        question: payload.question,
+        answer: analysis.sectionResult.content,
+        citations: analysis.citations,
+        confidence: analysis.sectionResult.confidence,
+        structuredData: analysis.structuredData,
+      });
+
+      return {
+        conversationId,
+        answer: analysis.sectionResult.content,
+        citations: analysis.citations,
+        confidence: analysis.sectionResult.confidence,
+        structuredData: analysis.structuredData,
+        missingInformation: analysis.hasProcessedChunks
+          ? []
+          : ['Os documentos ainda nao estavam totalmente processados no momento da analise.'],
+      };
+    }
+
+    const [edital, hasProcessedChunks] = await Promise.all([
       this.loadEdital(noticeId),
       this.hasProcessedChunks(noticeId),
-      this.resolveChatUserId(payload.userId),
     ]);
 
     const shouldUseStructuredAnswer = shouldUseStructuredNoticeAnswer(payload.question);
@@ -100,6 +133,7 @@ export class AIService {
       question: payload.question,
       answer,
       citations,
+      confidence,
     });
 
     return {
@@ -186,7 +220,7 @@ export class AIService {
   }
 
   private async hasProcessedChunks(noticeId: string): Promise<boolean> {
-    const count = await this.prisma.noticeChunk.count({ where: { noticeId } });
+    const count = await this.prisma.noticeEmbedding.count({ where: { noticeId } });
     return count > 0;
   }
 
@@ -331,8 +365,10 @@ export class AIService {
     question: string;
     answer: string;
     citations: AICitation[];
+    confidence?: AskAIResponse['confidence'];
+    structuredData?: AskAIResponse['structuredData'];
   }): Promise<string> {
-    const { noticeId, question, answer, citations, userId } = input;
+    const { noticeId, question, answer, citations, userId, confidence, structuredData } = input;
     let { conversationId } = input;
 
     try {
@@ -355,6 +391,7 @@ export class AIService {
             role: 'assistant',
             content: answer,
             citationsJson: citations.length > 0 ? (citations as unknown as Prisma.InputJsonValue) : undefined,
+            metadataJson: buildAssistantMetadata(confidence, structuredData),
           },
         ],
       });
@@ -386,9 +423,31 @@ function buildCitations(
   relevantChunks: Awaited<ReturnType<AIService['loadRelevantChunks']>>,
 ): AICitation[] {
   return relevantChunks.map((chunk) => ({
-    title: 'Trecho do documento',
+    title: chunk.sourceDocumentName ?? 'Trecho do documento',
     excerpt: chunk.content.substring(0, 200) + (chunk.content.length > 200 ? '...' : ''),
+    sourceUrl: chunk.sourceDocumentUrl ?? undefined,
     chunkIndex: chunk.chunkIndex,
     similarity: chunk.similarity,
   }));
+}
+
+function buildAssistantMetadata(
+  confidence?: AskAIResponse['confidence'],
+  structuredData?: AskAIResponse['structuredData'],
+): Prisma.InputJsonValue | undefined {
+  if (!confidence && !structuredData) {
+    return undefined;
+  }
+
+  const metadata: Record<string, unknown> = {};
+
+  if (confidence) {
+    metadata.confidence = confidence;
+  }
+
+  if (structuredData) {
+    metadata.structuredData = structuredData;
+  }
+
+  return metadata as Prisma.InputJsonValue;
 }

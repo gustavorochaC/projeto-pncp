@@ -1,4 +1,9 @@
-import type { NoticeSearchFilters, NoticeSortOption } from "@pncp/types";
+import {
+  PNCP_PORTAL_MAX_PAGES,
+  PNCP_PORTAL_PAGE_SIZE,
+  type NoticeSearchFilters,
+  type NoticeSortOption,
+} from "@pncp/types";
 
 export const NOTICE_RETURN_TO_PARAM = "returnTo";
 export const NOTICE_HIGHLIGHT_PARAM = "highlightNotice";
@@ -9,7 +14,7 @@ export const defaultNoticeFilters: NoticeSearchFilters = {
   city: "",
   modality: "",
   page: 1,
-  pageSize: 20,
+  pageSize: PNCP_PORTAL_PAGE_SIZE,
   sort: "publishedAt:desc",
 };
 
@@ -64,6 +69,14 @@ function isSortOption(value: string | undefined): value is NoticeSortOption {
   return Boolean(value && SORT_OPTIONS.has(value as NoticeSortOption));
 }
 
+export function clampPortalPage(page: number | undefined): number | undefined {
+  if (page === undefined) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.min(PNCP_PORTAL_MAX_PAGES, page));
+}
+
 export function parseNoticeFilters(
   params: Record<string, string | string[] | undefined>,
 ): NoticeSearchFilters {
@@ -73,7 +86,8 @@ export function parseNoticeFilters(
   const modality =
     getFirstValue(params.modality) ?? defaultNoticeFilters.modality;
   const page =
-    parsePositiveNumber(getFirstValue(params.page)) ?? defaultNoticeFilters.page;
+    clampPortalPage(parsePositiveNumber(getFirstValue(params.page))) ??
+    defaultNoticeFilters.page;
   const pageSize =
     parsePositiveNumber(getFirstValue(params.pageSize)) ??
     defaultNoticeFilters.pageSize;

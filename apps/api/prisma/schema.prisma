@@ -27,8 +27,9 @@ model User {
   updatedAt       DateTime         @updatedAt @map("updated_at")
   savedSearches   SavedSearch[]
   searchHistory   SearchHistory[]
-  favoriteNotices FavoriteNotice[]
-  conversations   AIConversation[]
+  favoriteNotices     FavoriteNotice[]
+  pncpEditalFavorites PncpEditalFavorite[]
+  conversations       AIConversation[]
   alertRules      AlertRule[]
   notifications   Notification[]
   auditLogs       AuditLog[]
@@ -159,14 +160,18 @@ model NoticeSyncLog {
 }
 
 model NoticeChunk {
-  id           String   @id @default(uuid()) @db.Uuid
-  noticeId     String   @map("notice_id") @db.Uuid
-  attachmentId String?  @map("attachment_id") @db.Uuid
-  chunkIndex   Int      @map("chunk_index")
-  content      String
-  tokens       Int?
-  createdAt    DateTime @default(now()) @map("created_at")
-  notice       PncpEdital @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+  id                 String    @id @default(uuid()) @db.Uuid
+  noticeId           String    @map("notice_id") @db.Uuid
+  attachmentId       String?   @map("attachment_id") @db.Uuid
+  chunkIndex         Int       @map("chunk_index")
+  content            String
+  tokens             Int?
+  sourceDocumentName String?   @map("source_document_name")
+  sourceDocumentType String?   @map("source_document_type")
+  sourceDocumentKey  String?   @map("source_document_key")
+  sourceDocumentUrl  String?   @map("source_document_url")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  notice             PncpEdital @relation(fields: [noticeId], references: [id], onDelete: Cascade)
 
   @@unique([noticeId, chunkIndex])
   @@map("notice_chunks")
@@ -207,6 +212,7 @@ model AIMessage {
   role           String
   content        String
   citationsJson  Json?          @map("citations_json")
+  metadataJson   Json?          @map("metadata_json")
   createdAt      DateTime       @default(now()) @map("created_at")
   conversation   AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
@@ -321,6 +327,7 @@ model PncpEdital {
   embeddings               NoticeEmbedding[]
   conversations            AIConversation[]
   analyzerReports          AnalyzerReport[]
+  favorites                PncpEditalFavorite[]
 
   @@index([uf, municipioNome])
   @@index([dataEncerramentoProposta])
@@ -330,19 +337,33 @@ model PncpEdital {
 }
 
 model AnalyzerReport {
-  id         String   @id @default(uuid()) @db.Uuid
-  userId     String   @map("user_id") @db.Uuid
-  noticeId   String   @map("notice_id") @db.Uuid
-  resumo     Json?    @db.JsonB
-  riscos     Json?    @db.JsonB
-  precos     Json?    @db.JsonB
-  documentos Json?    @db.JsonB
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id                      String   @id @default(uuid()) @db.Uuid
+  userId                  String   @map("user_id") @db.Uuid
+  noticeId                String   @map("notice_id") @db.Uuid
+  resumo                  Json?    @db.JsonB
+  riscos                  Json?    @db.JsonB
+  precos                  Json?    @db.JsonB
+  documentos              Json?    @db.JsonB
+  requisitosParticipacao  Json?    @map("requisitos_participacao") @db.JsonB
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
   user   User       @relation(fields: [userId], references: [id])
   notice PncpEdital @relation(fields: [noticeId], references: [id])
 
   @@unique([userId, noticeId])
   @@map("analyzer_reports")
+}
+
+model PncpEditalFavorite {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String     @map("user_id") @db.Uuid
+  pncpEditalId String     @map("pncp_edital_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at")
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  edital       PncpEdital @relation(fields: [pncpEditalId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pncpEditalId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("pncp_edital_favorites")
 }

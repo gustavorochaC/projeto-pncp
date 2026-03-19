@@ -7,13 +7,21 @@ import type {
   NoticeOfficialLink,
   PaginatedResponse
 } from "@pncp/types";
+import {
+  PNCP_PORTAL_PAGE_SIZE,
+  parseSearchTerms
+} from "@pncp/types";
 import { AIService } from "../ai/ai.service";
 import { DocumentProcessorService } from "../ai/rag/document-processor.service";
 import { PrismaService } from "../common/prisma.service";
 import { PncpAdapter } from "../sources/pncp.adapter";
 import { isLegacyPncpPortalUrl } from "../sources/pncp-publication.util";
 import { PncpConsultaService } from "../sources/pncp-consulta.service";
-import { PncpSearchService } from "../sources/pncp-search.service";
+import {
+  PncpSearchService,
+  normalizePortalSearchPage,
+  resolvePncpSearchStatus
+} from "../sources/pncp-search.service";
 import type { AskAIDto } from "./dto/ask-ai.dto";
 import type { NoticeQueryDto } from "./dto/notice-query.dto";
 import {
@@ -24,7 +32,7 @@ import {
 } from "./notice-search.mapper";
 
 const DEFAULT_PAGE = 1;
-const DEFAULT_PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = PNCP_PORTAL_PAGE_SIZE;
 const MAX_PAGE_SIZE = 100;
 const CLOSED_STATUSES: PncpEditalStatus[] = [
   PncpEditalStatus.ENCERRADO,
@@ -47,13 +55,24 @@ export class NoticesService {
   ) {}
 
   async search(query: NoticeQueryDto): Promise<PaginatedResponse<NoticeListItem>> {
+    const terms = parseSearchTerms(query.query);
+
+    if (terms.length > 1) {
+      return this.searchMultiTerm(query, terms);
+    }
+
+    if (!this.shouldQueryPncp(query)) {
+      return this.searchFromLocalCache(query);
+    }
+
     try {
       return await this.searchFromPncp(query);
     } catch (error) {
+      const localResult = await this.searchFromLocalCache(query);
       this.logger.warn(
         `Busca remota do PNCP indisponivel. Usando cache local. Motivo: ${stringifyUnknown(error)}`
       );
-      return this.searchFromLocalCache(query);
+      return localResult;
     }
   }
 
@@ -203,7 +222,7 @@ export class NoticesService {
   }
 
   private async searchFromPncp(query: NoticeQueryDto): Promise<PaginatedResponse<NoticeListItem>> {
-    const page = normalizePage(query.page);
+    const page = normalizePortalSearchPage(query.page);
     const pageSize = normalizePageSize(query.pageSize);
     const remoteResult = await this.pncpSearchService.searchEditais({
       ...query,
@@ -211,13 +230,15 @@ export class NoticesService {
       pageSize
     });
     const items = await this.persistSearchItems(remoteResult.items);
+    const total = remoteResult.total;
+    const totalPages = pageSize > 0 ? Math.ceil(total / pageSize) : 0;
 
     return {
       items,
       page,
       pageSize,
-      total: remoteResult.total,
-      totalPages: pageSize > 0 ? Math.ceil(remoteResult.total / pageSize) : 0
+      total,
+      totalPages
     };
   }
 
@@ -246,6 +267,46 @@ export class NoticesService {
       total,
       totalPages: pageSize > 0 ? Math.ceil(total / pageSize) : 0
     };
+  }
+
+  private async searchMultiTerm(
+    query: NoticeQueryDto,
+    terms: string[]
+  ): Promise<PaginatedResponse<NoticeListItem>> {
+    if (this.shouldQueryPncp(query)) {
+      try {
+        await this.prefetchPncpForTerms(query, terms);
+      } catch (error) {
+        this.logger.warn(
+          `Prefetch remoto para busca multi-termo falhou. Usando cache local. Motivo: ${stringifyUnknown(error)}`
+        );
+      }
+    }
+
+    return this.searchFromLocalCache(query);
+  }
+
+  private async prefetchPncpForTerms(
+    query: NoticeQueryDto,
+    terms: string[]
+  ): Promise<void> {
+    const results = await Promise.allSettled(
+      terms.map((term) =>
+        this.pncpSearchService.searchEditais({
+          ...query,
+          query: term,
+          page: 1
+        })
+      )
+    );
+
+    const allItems = results.flatMap((r) =>
+      r.status === "fulfilled" ? r.value.items : []
+    );
+
+    if (allItems.length > 0) {
+      await this.persistSearchItems(allItems);
+    }
   }
 
   private async persistSearchItems(
@@ -293,6 +354,14 @@ export class NoticesService {
       .map((row) => mapPncpEditalRowToNoticeListItem(row));
   }
 
+  private shouldQueryPncp(query: NoticeQueryDto): boolean {
+    if (hasUnsupportedRemoteFilters(query)) {
+      return false;
+    }
+
+    return resolvePncpSearchStatus(query) !== null;
+  }
+
   private buildSearchWhere(query: NoticeQueryDto): Prisma.PncpEditalWhereInput {
     const conditions: Prisma.PncpEditalWhereInput[] = [
       {
@@ -303,18 +372,24 @@ export class NoticesService {
       }
     ];
 
-    const textQuery = cleanText(query.query);
-    if (textQuery) {
-      conditions.push({
-        OR: [
-          { objetoCompra: containsInsensitive(textQuery) },
-          { nomeOrgao: containsInsensitive(textQuery) },
-          { municipioNome: containsInsensitive(textQuery) },
-          { modalidadeNome: containsInsensitive(textQuery) },
-          { numeroControlePncp: containsInsensitive(textQuery) },
-          { numeroCompra: containsInsensitive(textQuery) }
-        ]
-      });
+    const terms = parseSearchTerms(query.query);
+    if (terms.length > 0) {
+      const textFieldsOr = (term: string): Prisma.PncpEditalWhereInput[] => [
+        { objetoCompra: containsInsensitive(term) },
+        { nomeOrgao: containsInsensitive(term) },
+        { municipioNome: containsInsensitive(term) },
+        { modalidadeNome: containsInsensitive(term) },
+        { numeroControlePncp: containsInsensitive(term) },
+        { numeroCompra: containsInsensitive(term) }
+      ];
+
+      if (terms.length === 1) {
+        conditions.push({ OR: textFieldsOr(terms[0]) });
+      } else {
+        conditions.push({
+          OR: terms.map((term) => ({ OR: textFieldsOr(term) }))
+        });
+      }
     }
 
     const state = cleanText(query.state)?.toUpperCase();
@@ -611,4 +686,16 @@ function stringifyUnknown(value: unknown): string {
   }
 
   return String(value);
+}
+
+function hasUnsupportedRemoteFilters(query: NoticeQueryDto): boolean {
+  return (
+    Boolean(cleanText(query.publishedFrom)) ||
+    Boolean(cleanText(query.publishedTo)) ||
+    Boolean(cleanText(query.closingFrom)) ||
+    Boolean(cleanText(query.closingTo)) ||
+    typeof query.estimatedValueMin === "number" ||
+    typeof query.estimatedValueMax === "number" ||
+    query.onlyWithAttachments === true
+  );
 }

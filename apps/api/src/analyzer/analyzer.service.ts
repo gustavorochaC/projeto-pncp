@@ -9,6 +9,7 @@ import type { AnalyzerSectionResult } from '@pncp/types';
 import { PrismaService } from '../common/prisma.service';
 import { EmbeddingService } from '../ai/rag/embedding.service';
 import { DocumentProcessorService } from '../ai/rag/document-processor.service';
+import { ParticipationRequirementsService } from '../ai/participation-requirements.service';
 import { PncpConsultaService } from '../sources/pncp-consulta.service';
 import { fetchWithTimeout, isAbortError } from '../ai/ai-request.util';
 
@@ -26,6 +27,7 @@ export class AnalyzerService {
     private readonly embeddingService: EmbeddingService,
     private readonly documentProcessorService: DocumentProcessorService,
     private readonly pncpConsultaService: PncpConsultaService,
+    private readonly participationRequirementsService: ParticipationRequirementsService,
   ) {}
 
   async getOrCreateReport(userId: string, noticeId: string) {
@@ -287,6 +289,21 @@ export class AnalyzerService {
     });
 
     return result;
+  }
+
+  async generateRequisitosParticipacao(
+    noticeId: string,
+    userId: string,
+    force = false,
+  ): Promise<AnalyzerSectionResult> {
+    const resolvedUserId = await this.resolveUserId(userId);
+    const analysis = await this.participationRequirementsService.getOrGenerateAnalysis(
+      noticeId,
+      resolvedUserId,
+      force,
+    );
+
+    return analysis.sectionResult;
   }
 
   private async generateWithOllama(prompt: string): Promise<string> {

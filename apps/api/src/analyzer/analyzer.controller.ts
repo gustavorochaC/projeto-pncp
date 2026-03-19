@@ -22,6 +22,7 @@ export class AnalyzerController {
       riscos: report.riscos as AnalyzerReportResponse['riscos'],
       precos: report.precos as AnalyzerReportResponse['precos'],
       documentos: report.documentos as AnalyzerReportResponse['documentos'],
+      requisitosParticipacao: report.requisitosParticipacao as AnalyzerReportResponse['requisitosParticipacao'],
       createdAt: report.createdAt.toISOString(),
       updatedAt: report.updatedAt.toISOString(),
     };
@@ -57,5 +58,13 @@ export class AnalyzerController {
     @Body() body: GenerateSectionRequest,
   ) {
     return this.analyzerService.generateDocumentos(noticeId, body.userId ?? '', body.force);
+  }
+
+  @Post(':noticeId/requisitosParticipacao')
+  async generateRequisitosParticipacao(
+    @Param('noticeId') noticeId: string,
+    @Body() body: GenerateSectionRequest,
+  ) {
+    return this.analyzerService.generateRequisitosParticipacao(noticeId, body.userId ?? '', body.force);
   }
 }

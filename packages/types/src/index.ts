@@ -5,6 +5,42 @@ export type NoticeSortOption =
   | "estimatedValue:desc"
   | "estimatedValue:asc";
 
+export const PNCP_PORTAL_PAGE_SIZE = 10;
+export const PNCP_PORTAL_MAX_RESULTS = 9990;
+export const PNCP_PORTAL_MAX_PAGES = 999;
+
+/**
+ * Splits a comma-separated query string into unique, trimmed terms.
+ * Preserves the original casing but deduplicates case-insensitively.
+ * Returns an empty array for null/undefined/blank input.
+ *
+ * Future: this function is the single normalization point for search terms.
+ * When saved keyword groups are implemented, the group's terms can be fed
+ * through this same pipeline to reuse the OR semantics on the backend.
+ * TODO(saved-keyword-groups): CRUD for keyword groups, persistence, and UI.
+ */
+export function parseSearchTerms(query: string | null | undefined): string[] {
+  if (!query) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  return query
+    .split(",")
+    .map((term) => term.trim())
+    .filter((term) => {
+      if (term.length === 0) {
+        return false;
+      }
+      const lower = term.toLowerCase();
+      if (seen.has(lower)) {
+        return false;
+      }
+      seen.add(lower);
+      return true;
+    });
+}
+
 export interface NoticeSearchFilters {
   query?: string;
   state?: string;
@@ -128,6 +164,7 @@ export interface AskAIRequest {
   question: string;
   conversationId?: string;
   userId?: string;
+  mode?: "default" | "participation_requirements";
 }
 
 export interface AICitation {
@@ -139,12 +176,56 @@ export interface AICitation {
   similarity?: number;
 }
 
+export type ParticipationRequirementCategory =
+  | "habilitacao_juridica"
+  | "regularidade_fiscal_trabalhista"
+  | "qualificacao_economico_financeira"
+  | "qualificacao_tecnica"
+  | "certificacao"
+  | "registro_licenca_credenciamento"
+  | "declaracao_obrigatoria"
+  | "outro_requisito_de_participacao";
+
+export interface ParticipationRequirement {
+  category: ParticipationRequirementCategory;
+  subcategory: string;
+  requirement: string;
+  normalizedTerm: string;
+  mandatoryLevel: "mandatory" | "conditional" | "optional" | "unclear";
+  appliesTo: string;
+  sourceDocument: string;
+  evidenceExcerpt: string;
+  confidence: "high" | "medium" | "low";
+}
+
+export interface ParticipationInference extends ParticipationRequirement {
+  reasoning: string;
+}
+
+export interface ParticipationMissingEvidence {
+  topic: string;
+  reason: string;
+  recommendedFollowup: string;
+}
+
+export interface ParticipationRequirementsResult {
+  kind: "participation_requirements";
+  explicitRequirements: ParticipationRequirement[];
+  possibleInferences: ParticipationInference[];
+  missingEvidence: ParticipationMissingEvidence[];
+  documentsReviewed: string[];
+  analysisNotes: string[];
+}
+
+export type AIMessageStructuredData = ParticipationRequirementsResult;
+
 export interface AskAIResponse {
   conversationId: string;
   answer: string;
   citations: AICitation[];
   confidence: "high" | "medium" | "low";
   missingInformation?: string[];
+  structuredData?: AIMessageStructuredData;
 }
 
 export interface SavedSearchPayload {
@@ -175,6 +256,7 @@ export interface AIMessageItem {
   content: string;
   citations: AICitation[];
   confidence?: "high" | "medium" | "low";
+  structuredData?: AIMessageStructuredData;
   createdAt: string;
 }
 
@@ -210,7 +292,12 @@ export interface DocumentProcessingStatus {
 }
 
 // ── Analyzer ──
-export type AnalyzerSectionName = "resumo" | "riscos" | "precos" | "documentos";
+export type AnalyzerSectionName =
+  | "resumo"
+  | "riscos"
+  | "precos"
+  | "documentos"
+  | "requisitosParticipacao";
 
 export interface AnalyzerSectionResult {
   content: string;
@@ -226,6 +313,7 @@ export interface AnalyzerReportResponse {
   riscos: AnalyzerSectionResult | null;
   precos: AnalyzerSectionResult | null;
   documentos: AnalyzerSectionResult | null;
+  requisitosParticipacao: AnalyzerSectionResult | null;
   createdAt: string;
   updatedAt: string;
 }
