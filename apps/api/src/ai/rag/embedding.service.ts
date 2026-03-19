@@ -78,6 +78,10 @@ export class EmbeddingService {
     content: string;
     chunkIndex: number;
     attachmentId: string | null;
+    sourceDocumentName: string | null;
+    sourceDocumentType: string | null;
+    sourceDocumentKey: string | null;
+    sourceDocumentUrl: string | null;
     similarity: number;
   }[]> {
     const embeddingStr = `[${queryEmbedding.join(',')}]`;
@@ -87,6 +91,10 @@ export class EmbeddingService {
       content: string;
       chunk_index: number;
       attachment_id: string | null;
+      source_document_name: string | null;
+      source_document_type: string | null;
+      source_document_key: string | null;
+      source_document_url: string | null;
       similarity: number;
     }[]>(
       `SELECT
@@ -94,6 +102,10 @@ export class EmbeddingService {
          nc.content,
          nc.chunk_index,
          nc.attachment_id,
+         nc.source_document_name,
+         nc.source_document_type,
+         nc.source_document_key,
+         nc.source_document_url,
          1 - (ne.embedding <=> $2::vector) AS similarity
        FROM notice_embeddings ne
        JOIN notice_chunks nc ON nc.id = ne.chunk_id
@@ -111,6 +123,10 @@ export class EmbeddingService {
       content: r.content,
       chunkIndex: r.chunk_index,
       attachmentId: r.attachment_id,
+      sourceDocumentName: r.source_document_name,
+      sourceDocumentType: r.source_document_type,
+      sourceDocumentKey: r.source_document_key,
+      sourceDocumentUrl: r.source_document_url,
       similarity: Number(r.similarity),
     }));
   }

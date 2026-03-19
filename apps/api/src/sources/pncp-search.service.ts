@@ -1,4 +1,8 @@
 import { BadGatewayException, GatewayTimeoutException, Injectable, Logger } from "@nestjs/common";
+import {
+  PNCP_PORTAL_MAX_PAGES,
+  PNCP_PORTAL_PAGE_SIZE
+} from "@pncp/types";
 import type { NoticeQueryDto } from "../notices/dto/notice-query.dto";
 
 export interface PncpSearchTypeSummary {
@@ -47,6 +51,7 @@ type NoticeQuerySubset = Pick<
   | "agency"
   | "modality"
   | "status"
+  | "onlyOpen"
   | "page"
   | "pageSize"
   | "sort"
@@ -55,7 +60,9 @@ type NoticeQuerySubset = Pick<
   | "modalityId"
 >;
 
-const DEFAULT_STATUS = "recebendo_proposta";
+const ALL_STATUSES = "todos";
+const OPEN_STATUS = "recebendo_proposta";
+const CLOSED_STATUS = "encerradas";
 
 export function mapNoticeSortToPncp(sort: NoticeQueryDto["sort"] | undefined): string {
   if (sort === "relevance") {
@@ -77,12 +84,15 @@ export function mapNoticeSortToPncp(sort: NoticeQueryDto["sort"] | undefined): s
 export function mapNoticeQueryToPncpSearchParams(query: NoticeQuerySubset): URLSearchParams {
   const params = new URLSearchParams();
   params.set("tipos_documento", "edital");
-  params.set("pagina", String(query.page ?? 1));
-  params.set("tam_pagina", String(query.pageSize ?? 20));
+  params.set("pagina", String(normalizePortalSearchPage(query.page)));
+  params.set("tam_pagina", String(query.pageSize ?? PNCP_PORTAL_PAGE_SIZE));
   params.set("ordenacao", mapNoticeSortToPncp(query.sort));
 
-  const normalizedStatus = normalizeStatus(query.status);
-  params.set("status", normalizedStatus ?? DEFAULT_STATUS);
+  const normalizedStatus = resolvePncpSearchStatus(query);
+  if (!normalizedStatus) {
+    throw new Error("PNCP search requires a supported status filter.");
+  }
+  params.set("status", normalizedStatus);
 
   const uf = cleanText(query.state)?.toUpperCase();
   if (uf) {
@@ -222,9 +232,55 @@ export class PncpSearchService {
   }
 }
 
-function normalizeStatus(value?: string): string | null {
-  const normalized = cleanText(value);
-  return normalized ? normalized.toLowerCase() : null;
+export function resolvePncpSearchStatus(
+  query: Pick<NoticeQueryDto, "status" | "onlyOpen">
+): string | null {
+  const normalized = cleanText(query.status)?.toLowerCase();
+  if (query.onlyOpen) {
+    if (!normalized || normalized === ALL_STATUSES || normalized === "todas") {
+      return OPEN_STATUS;
+    }
+
+    if (normalized === OPEN_STATUS || normalized.includes("abert") || normalized.includes("receb")) {
+      return OPEN_STATUS;
+    }
+
+    return null;
+  }
+
+  if (!normalized) {
+    return ALL_STATUSES;
+  }
+
+  if (normalized === ALL_STATUSES || normalized === "todas") {
+    return ALL_STATUSES;
+  }
+
+  if (normalized === OPEN_STATUS) {
+    return OPEN_STATUS;
+  }
+
+  if (
+    normalized === CLOSED_STATUS ||
+    normalized.includes("encerrad") ||
+    normalized.includes("julgament")
+  ) {
+    return CLOSED_STATUS;
+  }
+
+  if (normalized.includes("abert") || normalized.includes("receb")) {
+    return OPEN_STATUS;
+  }
+
+  return null;
+}
+
+export function normalizePortalSearchPage(page?: number): number {
+  if (!Number.isFinite(page) || page === undefined) {
+    return 1;
+  }
+
+  return Math.max(1, Math.min(PNCP_PORTAL_MAX_PAGES, Math.trunc(page)));
 }
 
 function normalizeIdFilter(value?: string | null): string | null {

@@ -1,4 +1,5 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
+import { PNCP_PORTAL_PAGE_SIZE } from "@pncp/types";
 import { Transform } from "class-transformer";
 import {
   IsBoolean,
@@ -101,7 +102,7 @@ export class NoticeQueryDto {
   @IsNumber()
   @Min(10)
   @Max(100)
-  pageSize = 20;
+  pageSize = PNCP_PORTAL_PAGE_SIZE;
 
   @ApiPropertyOptional()
   @IsOptional()

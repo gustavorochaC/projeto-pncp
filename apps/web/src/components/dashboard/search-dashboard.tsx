@@ -1,9 +1,13 @@
 "use client";
 
 import { useDeferredValue, useEffect, useState } from "react";
+import Alert from "@mui/material/Alert";
+import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
+import Grid from "@mui/material/Grid2";
 import InputAdornment from "@mui/material/InputAdornment";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
@@ -12,14 +16,20 @@ import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-import Alert from "@mui/material/Alert";
-import Grid from "@mui/material/Grid2";
-import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
-import type { NoticeSearchFilters } from "@pncp/types";
-import { useNotices } from "@/hooks/use-notices";
+import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
+import {
+  PNCP_PORTAL_MAX_PAGES,
+  type NoticeSearchFilters,
+  parseSearchTerms,
+} from "@pncp/types";
+import {
+  formatPortalResultsSummary,
+  normalizePortalDashboardFilters,
+} from "@/components/dashboard/search-dashboard.utils";
 import { NoticeCardList } from "@/components/notices/notice-card-list";
+import { useNotices } from "@/hooks/use-notices";
 import {
   buildNoticeSearchParams,
   defaultNoticeFilters,
@@ -34,20 +44,37 @@ export function SearchDashboard({
   initialFilters,
   initialHighlightNoticeId = null,
 }: SearchDashboardProps) {
-  const [filters, setFilters] = useState<NoticeSearchFilters>(initialFilters);
+  const [filters, setFilters] = useState<NoticeSearchFilters>(() =>
+    normalizePortalDashboardFilters(initialFilters),
+  );
   const [highlightedNoticeId, setHighlightedNoticeId] = useState<string | null>(
     initialHighlightNoticeId,
   );
   const deferredQuery = useDeferredValue(filters.query);
+  const queryChips = parseSearchTerms(filters.query);
 
   useEffect(() => {
-    const searchParams = buildNoticeSearchParams(filters);
+    const normalizedFilters = normalizePortalDashboardFilters(filters);
+    const searchParams = buildNoticeSearchParams(normalizedFilters);
     const queryString = searchParams.toString();
-    window.history.replaceState(null, "", queryString ? `?${queryString}` : window.location.pathname);
+    window.history.replaceState(
+      null,
+      "",
+      queryString ? `?${queryString}` : window.location.pathname,
+    );
   }, [filters]);
 
-  const effectiveFilters = { ...filters, query: deferredQuery };
+  const effectiveFilters = {
+    ...normalizePortalDashboardFilters(filters),
+    query: deferredQuery,
+  };
   const noticesQuery = useNotices(effectiveFilters);
+  const resultsSummary = noticesQuery.data
+    ? formatPortalResultsSummary(
+        noticesQuery.data.items.length,
+        noticesQuery.data.total,
+      )
+    : null;
 
   useEffect(() => {
     if (!highlightedNoticeId || !noticesQuery.data?.items.length) {
@@ -85,25 +112,66 @@ export function SearchDashboard({
           </Typography>
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, lg: 6 }}>
-              <TextField
-                fullWidth
-                size="medium"
-                id="search-query"
-                label="Buscar licitações"
-                placeholder="Ex.: material de escritório"
-                value={filters.query ?? ""}
-                onChange={(e) =>
-                  setFilters((c) => ({ ...c, query: e.target.value, page: 1 }))
-                }
-                slotProps={{
-                  input: {
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchOutlinedIcon fontSize="small" sx={{ color: "text.secondary" }} aria-hidden />
-                      </InputAdornment>
-                    ),
-                  },
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={queryChips}
+                onChange={(_event, newValue) => {
+                  const expanded = (newValue as string[]).flatMap((v) =>
+                    v
+                      .split(",")
+                      .map((t) => t.trim())
+                      .filter((t) => t.length > 0),
+                  );
+                  setFilters((current) => ({
+                    ...current,
+                    query: expanded.join(", "),
+                    page: 1,
+                  }));
                 }}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={key}
+                        label={option}
+                        size="small"
+                        color="primary"
+                        variant="outlined"
+                        {...chipProps}
+                      />
+                    );
+                  })
+                }
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Buscar licitacoes"
+                    placeholder={
+                      queryChips.length === 0
+                        ? "Digite e pressione Enter"
+                        : ""
+                    }
+                    helperText="Digite um termo e pressione Enter para adicionar"
+                    InputProps={{
+                      ...params.InputProps,
+                      startAdornment: (
+                        <>
+                          <InputAdornment position="start">
+                            <SearchOutlinedIcon
+                              fontSize="small"
+                              sx={{ color: "text.secondary" }}
+                              aria-hidden
+                            />
+                          </InputAdornment>
+                          {params.InputProps.startAdornment}
+                        </>
+                      ),
+                    }}
+                  />
+                )}
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 4, lg: 2 }}>
@@ -114,7 +182,13 @@ export function SearchDashboard({
                 label="UF"
                 placeholder="Ex.: SP"
                 value={filters.state ?? ""}
-                onChange={(e) => setFilters((c) => ({ ...c, state: e.target.value, page: 1 }))}
+                onChange={(e) =>
+                  setFilters((current) => ({
+                    ...current,
+                    state: e.target.value,
+                    page: 1,
+                  }))
+                }
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 4, lg: 2 }}>
@@ -122,10 +196,16 @@ export function SearchDashboard({
                 fullWidth
                 size="small"
                 id="filter-city"
-                label="Município"
-                placeholder="Ex.: São Paulo"
+                label="Municipio"
+                placeholder="Ex.: Sao Paulo"
                 value={filters.city ?? ""}
-                onChange={(e) => setFilters((c) => ({ ...c, city: e.target.value, page: 1 }))}
+                onChange={(e) =>
+                  setFilters((current) => ({
+                    ...current,
+                    city: e.target.value,
+                    page: 1,
+                  }))
+                }
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 4, lg: 2 }}>
@@ -134,10 +214,14 @@ export function SearchDashboard({
                 size="small"
                 id="filter-modality"
                 label="Modalidade"
-                placeholder="Ex.: Pregão"
+                placeholder="Ex.: Pregao"
                 value={filters.modality ?? ""}
                 onChange={(e) =>
-                  setFilters((c) => ({ ...c, modality: e.target.value, page: 1 }))
+                  setFilters((current) => ({
+                    ...current,
+                    modality: e.target.value,
+                    page: 1,
+                  }))
                 }
               />
             </Grid>
@@ -150,16 +234,18 @@ export function SearchDashboard({
                 label="Ordenar"
                 value={filters.sort}
                 onChange={(e) =>
-                  setFilters((c) => ({
-                    ...c,
+                  setFilters((current) => ({
+                    ...current,
                     sort: e.target.value as NoticeSearchFilters["sort"],
                     page: 1,
                   }))
                 }
               >
-                <MenuItem value="relevance">Relevância</MenuItem>
+                <MenuItem value="relevance">Relevancia</MenuItem>
                 <MenuItem value="publishedAt:desc">Mais recentes</MenuItem>
-                <MenuItem value="closingAt:asc">Encerramento mais próximo</MenuItem>
+                <MenuItem value="closingAt:asc">
+                  Encerramento mais proximo
+                </MenuItem>
                 <MenuItem value="estimatedValue:desc">Maior valor</MenuItem>
                 <MenuItem value="estimatedValue:asc">Menor valor</MenuItem>
               </Select>
@@ -167,7 +253,11 @@ export function SearchDashboard({
             <Button
               variant={filters.onlyOpen ? "contained" : "outlined"}
               onClick={() =>
-                setFilters((c) => ({ ...c, onlyOpen: !c.onlyOpen, page: 1 }))
+                setFilters((current) => ({
+                  ...current,
+                  onlyOpen: !current.onlyOpen,
+                  page: 1,
+                }))
               }
             >
               Somente em aberto
@@ -175,7 +265,7 @@ export function SearchDashboard({
             <Button
               variant="text"
               onClick={() => {
-                setFilters(defaultNoticeFilters);
+                setFilters(normalizePortalDashboardFilters(defaultNoticeFilters));
                 setHighlightedNoticeId(null);
               }}
             >
@@ -187,11 +277,14 @@ export function SearchDashboard({
 
       {noticesQuery.isLoading ? (
         <Paper sx={{ p: 3 }}>
-          <Typography color="text.secondary">Carregando oportunidades...</Typography>
+          <Typography color="text.secondary">
+            Carregando oportunidades...
+          </Typography>
         </Paper>
       ) : noticesQuery.isError ? (
         <Alert severity="error" role="alert">
-          Não foi possível carregar os editais agora. Tente novamente em alguns instantes.
+          Nao foi possivel carregar os editais agora. Tente novamente em alguns
+          instantes.
         </Alert>
       ) : noticesQuery.data?.items.length ? (
         <Box
@@ -207,50 +300,85 @@ export function SearchDashboard({
           }}
         >
           <Stack spacing={2}>
+            <Paper sx={{ p: 2.5 }}>
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1}
+                alignItems={{ xs: "flex-start", sm: "center" }}
+                justifyContent="space-between"
+              >
+                <Box>
+                  <Typography variant="overline" color="text.secondary">
+                    Resultados
+                  </Typography>
+                  <Typography
+                    variant="h6"
+                    fontWeight={700}
+                    color="text.primary"
+                  >
+                    {resultsSummary}
+                  </Typography>
+                </Box>
+              </Stack>
+            </Paper>
+
             <NoticeCardList
               items={noticesQuery.data.items}
               highlightedNoticeId={highlightedNoticeId}
             />
-            <Paper sx={{ p: 2.5, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Página {noticesQuery.data.page} de {noticesQuery.data.totalPages} · {noticesQuery.data.total} resultados
-            </Typography>
-            <Stack direction="row" spacing={1}>
-              <Button
-                variant="outlined"
-                size="small"
-                disabled={filters.page === 1}
-                startIcon={<ChevronLeftIcon aria-hidden />}
-                onClick={() =>
-                  setFilters((c) => ({
-                    ...c,
-                    page: Math.max((c.page ?? 1) - 1, 1),
-                  }))
-                }
-                aria-label="Página anterior"
-              >
-                Anterior
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                disabled={filters.page === noticesQuery.data.totalPages}
-                endIcon={<ChevronRightIcon aria-hidden />}
-                onClick={() =>
-                  setFilters((c) => ({
-                    ...c,
-                    page: Math.min(
-                      (c.page ?? 1) + 1,
-                      noticesQuery.data!.totalPages
-                    ),
-                  }))
-                }
-                aria-label="Próxima página"
-              >
-                Próxima
-              </Button>
-            </Stack>
-          </Paper>
+
+            <Paper
+              sx={{
+                p: 2.5,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: 2,
+              }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                {resultsSummary}
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={filters.page === 1}
+                  startIcon={<ChevronLeftIcon aria-hidden />}
+                  onClick={() =>
+                    setFilters((current) => ({
+                      ...current,
+                      page: Math.max((current.page ?? 1) - 1, 1),
+                    }))
+                  }
+                  aria-label="Pagina anterior"
+                >
+                  Anterior
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={
+                    filters.page === noticesQuery.data.totalPages ||
+                    filters.page === PNCP_PORTAL_MAX_PAGES
+                  }
+                  endIcon={<ChevronRightIcon aria-hidden />}
+                  onClick={() =>
+                    setFilters((current) => ({
+                      ...current,
+                      page: Math.min(
+                        (current.page ?? 1) + 1,
+                        noticesQuery.data!.totalPages,
+                      ),
+                    }))
+                  }
+                  aria-label="Proxima pagina"
+                >
+                  Proxima
+                </Button>
+              </Stack>
+            </Paper>
           </Stack>
         </Box>
       ) : (

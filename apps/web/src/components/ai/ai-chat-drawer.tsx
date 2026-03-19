@@ -21,6 +21,7 @@ import Toolbar from "@mui/material/Toolbar";
 import Typography from "@mui/material/Typography";
 import AddCommentOutlinedIcon from "@mui/icons-material/AddCommentOutlined";
 import CloseIcon from "@mui/icons-material/Close";
+import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
 import { AIMessageBubble } from "./ai-message-bubble";
 import {
@@ -32,7 +33,10 @@ import {
   useProcessingStatus,
 } from "@/hooks/use-ai-chat";
 import { createClient as createSupabaseClient } from "@/lib/supabase/client";
-import type { AIMessageItem, AskAIResponse, DocumentProcessingStatus } from "@pncp/types";
+import type { AIMessageItem, AskAIRequest, AskAIResponse, DocumentProcessingStatus } from "@pncp/types";
+
+const PARTICIPATION_REQUIREMENTS_QUESTION =
+  "Extrair requisitos de participacao e habilitacao deste edital.";
 
 interface Props {
   open: boolean;
@@ -44,6 +48,7 @@ type DraftSubmission = {
   id: string;
   question: string;
   conversationId: string | null;
+  mode?: AskAIRequest["mode"];
   status: "loading" | "done" | "error";
   response?: AskAIResponse;
   errorMessage?: string;
@@ -88,15 +93,16 @@ function buildDraftMessages(draft: DraftSubmission): AIMessageItem[] {
 
   return [
     userMessage,
-    {
-      id: `${draft.id}-assistant-done`,
-      role: "assistant",
-      content: draft.response?.answer ?? "Nao consegui gerar uma resposta no momento.",
-      citations: draft.response?.citations ?? [],
-      confidence: draft.response?.confidence ?? "low",
-      createdAt,
-    },
-  ];
+      {
+        id: `${draft.id}-assistant-done`,
+        role: "assistant",
+        content: draft.response?.answer ?? "Nao consegui gerar uma resposta no momento.",
+        citations: draft.response?.citations ?? [],
+        confidence: draft.response?.confidence ?? "low",
+        structuredData: draft.response?.structuredData,
+        createdAt,
+      },
+    ];
 }
 
 function draftAlreadyRendered(messages: AIMessageItem[], draft: DraftSubmission): boolean {
@@ -135,7 +141,7 @@ function ProcessingStagesCard({
   }
 
   const stageIndex =
-    status === "error" ? 0 : isPending || status === "idle" ? 1 : status === "processing" ? 2 : 3;
+    isError || status === "error" ? 0 : isPending || status === "idle" ? 1 : status === "processing" ? 2 : 3;
 
   const stepValue = stageIndex === 0 ? 0 : stageIndex === 1 ? 33 : stageIndex === 2 ? 66 : 100;
 
@@ -224,6 +230,7 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
   const [inputText, setInputText] = useState("");
   const [draftSubmission, setDraftSubmission] = useState<DraftSubmission | null>(null);
   const [chatUserId, setChatUserId] = useState<string | null>(null);
+  const [quickActionError, setQuickActionError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const autoProcessTriggeredRef = useRef<string | null>(null);
   const activeSubmissionIdRef = useRef<string | null>(null);
@@ -245,11 +252,28 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
   const conversations = conversationsQuery.data;
   const messages = messagesQuery.data ?? [];
   const processingStatus = processingStatusQuery.data;
+  const processingAttempt = processDocuments.data;
+  const hasProcessingAttempt =
+    processDocuments.isPending || processDocuments.isError || Boolean(processingAttempt);
+  const effectiveProcessingStatus = processDocuments.isPending
+    ? "processing"
+    : processingAttempt?.status ?? processingStatus?.status;
+  const effectiveProcessingError =
+    processDocuments.error instanceof Error
+      ? processDocuments.error.message
+      : processingAttempt?.message ?? processingStatus?.message;
+  const processingAttemptFailed =
+    processDocuments.isError ||
+    (hasProcessingAttempt &&
+      effectiveProcessingStatus !== undefined &&
+      effectiveProcessingStatus !== "done" &&
+      effectiveProcessingStatus !== "processing");
 
   useEffect(() => {
     if (!open) {
       setInputText("");
       setDraftSubmission(null);
+      setQuickActionError(null);
       activeSubmissionIdRef.current = null;
     }
   }, [open]);
@@ -258,6 +282,7 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
     autoProcessTriggeredRef.current = null;
     setDraftSubmission(null);
     setInputText("");
+    setQuickActionError(null);
     setActiveConversationId(null);
     activeSubmissionIdRef.current = null;
   }, [noticeId]);
@@ -325,18 +350,24 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
 
     autoProcessTriggeredRef.current = noticeId;
     processDocuments.mutate(undefined, {
+      onSuccess: (status) => {
+        if (status.status !== "done") {
+          autoProcessTriggeredRef.current = null;
+        }
+      },
       onError: () => {
         autoProcessTriggeredRef.current = null;
       },
     });
   };
 
-  const submitQuestion = (rawQuestion: string) => {
+  const submitQuestion = (rawQuestion: string, options?: { mode?: AskAIRequest["mode"] }) => {
     const question = rawQuestion.trim();
     if (!question || askAI.isPending) {
       return;
     }
 
+    setQuickActionError(null);
     const draftId = crypto.randomUUID();
     activeSubmissionIdRef.current = draftId;
     setInputText("");
@@ -344,11 +375,17 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
       id: draftId,
       question,
       conversationId: activeConversationId,
+      mode: options?.mode,
       status: "loading",
     });
 
     askAI.mutate(
-      { question, conversationId: activeConversationId ?? undefined, userId: chatUserId ?? undefined },
+      {
+        question,
+        conversationId: activeConversationId ?? undefined,
+        userId: chatUserId ?? undefined,
+        mode: options?.mode,
+      },
       {
         onSuccess: (data) => {
           if (activeSubmissionIdRef.current !== draftId) {
@@ -363,6 +400,7 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
             id: draftId,
             question,
             conversationId: data.conversationId,
+            mode: options?.mode,
             status: "done",
             response: data,
           });
@@ -373,11 +411,14 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
             return;
           }
 
-          setInputText(question);
+          if (options?.mode !== "participation_requirements") {
+            setInputText(question);
+          }
           setDraftSubmission({
             id: draftId,
             question,
             conversationId: activeConversationId,
+            mode: options?.mode,
             status: "error",
             errorMessage: getErrorMessage(error),
           });
@@ -390,12 +431,41 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
     submitQuestion(inputText);
   };
 
+  const handleExtractRequirements = async () => {
+    if (askAI.isPending || processDocuments.isPending) {
+      return;
+    }
+
+    setQuickActionError(null);
+
+    try {
+      if (processingStatus?.status !== "done") {
+        const status = await processDocuments.mutateAsync();
+        if (status.status !== "done") {
+          setQuickActionError(
+            status.message ??
+              "Os documentos ainda nao ficaram prontos para extrair os requisitos de participacao.",
+          );
+          return;
+        }
+
+        autoProcessTriggeredRef.current = noticeId;
+      }
+
+      submitQuestion(PARTICIPATION_REQUIREMENTS_QUESTION, {
+        mode: "participation_requirements",
+      });
+    } catch (error) {
+      setQuickActionError(getErrorMessage(error));
+    }
+  };
+
   const handleRetry = () => {
     if (!draftSubmission) {
       return;
     }
 
-    submitQuestion(draftSubmission.question);
+    submitQuestion(draftSubmission.question, { mode: draftSubmission.mode });
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -492,10 +562,10 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
       )}
 
       <ProcessingStagesCard
-        status={processingStatus?.status}
+        status={effectiveProcessingStatus}
         isPending={processDocuments.isPending}
-        isError={processDocuments.isError}
-        errorMessage={processDocuments.error instanceof Error ? processDocuments.error.message : processingStatus?.message}
+        isError={processingAttemptFailed}
+        errorMessage={effectiveProcessingError}
         onRetry={() => {
           autoProcessTriggeredRef.current = null;
           startBackgroundProcessing();
@@ -513,6 +583,20 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
           }
         >
           {getErrorMessage(queryError)}
+        </Alert>
+      )}
+
+      {quickActionError && (
+        <Alert
+          severity="warning"
+          sx={{ mx: 2, mt: 1.5, borderRadius: 1 }}
+          action={
+            <Button size="small" color="inherit" onClick={() => void handleExtractRequirements()}>
+              Tentar novamente
+            </Button>
+          }
+        >
+          {quickActionError}
         </Alert>
       )}
 
@@ -554,7 +638,19 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
 
       <Divider />
 
-      <Stack direction="row" spacing={1} sx={{ p: 1.5, alignItems: "flex-end" }}>
+      <Stack spacing={1} sx={{ p: 1.5 }}>
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={() => void handleExtractRequirements()}
+          disabled={askAI.isPending || processDocuments.isPending}
+          startIcon={<FactCheckOutlinedIcon fontSize="small" />}
+          sx={{ alignSelf: "flex-start", textTransform: "none" }}
+        >
+          {processDocuments.isPending ? "Preparando documentos..." : "Extrair requisitos"}
+        </Button>
+
+        <Stack direction="row" spacing={1} sx={{ alignItems: "flex-end" }}>
         <TextField
           fullWidth
           multiline
@@ -576,6 +672,7 @@ export function AIChatDrawer({ open, onClose, noticeId }: Props) {
         >
           <SendOutlinedIcon />
         </IconButton>
+        </Stack>
       </Stack>
     </Drawer>
   );

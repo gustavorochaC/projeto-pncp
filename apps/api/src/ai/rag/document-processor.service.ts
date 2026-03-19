@@ -19,12 +19,15 @@ export class DocumentProcessorService {
   async processNoticeDocuments(noticeId: string, force = false): Promise<DocumentProcessingStatus> {
     const edital = await this.prisma.pncpEdital.findUniqueOrThrow({ where: { id: noticeId } });
 
-    // Check if already processed
     if (!force) {
-      const existingCount = await this.prisma.noticeChunk.count({ where: { noticeId } });
-      if (existingCount > 0) {
-        const embeddingsCount = await this.prisma.noticeEmbedding.count({ where: { noticeId } });
-        return { noticeId, status: 'done', chunksCount: existingCount, embeddingsCount };
+      const existingStatus = await this.loadStoredStatus(noticeId);
+      if (existingStatus.chunksCount > 0 && existingStatus.embeddingsCount >= existingStatus.chunksCount) {
+        return existingStatus;
+      }
+
+      if (existingStatus.chunksCount > 0) {
+        await this.backfillMissingEmbeddings(noticeId);
+        return this.loadStoredStatus(noticeId);
       }
     }
 
@@ -49,8 +52,16 @@ export class DocumentProcessorService {
       return { noticeId, status: 'idle', chunksCount: 0, embeddingsCount: 0, message: 'Nenhum arquivo ativo encontrado' };
     }
 
+    if (force) {
+      await Promise.all([
+        this.prisma.noticeEmbedding.deleteMany({ where: { noticeId } }),
+        this.prisma.noticeChunk.deleteMany({ where: { noticeId } }),
+      ]);
+    }
+
     let totalChunks = 0;
     let totalEmbeddings = 0;
+    let nextChunkIndex = 0;
 
     for (const arq of activeArquivos) {
       const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${edital.cnpjOrgao}/compras/${edital.anoCompra}/${edital.sequencialCompra}/arquivos/${arq.sequencialDocumento}`;
@@ -76,17 +87,18 @@ export class DocumentProcessorService {
         const chunks = chunkText(text);
         if (chunks.length === 0) continue;
 
-        // Delete existing chunks for this notice before re-processing (if force)
-        if (force && totalChunks === 0) {
-          await this.prisma.noticeChunk.deleteMany({ where: { noticeId } });
-        }
+        const startChunkIndex = nextChunkIndex;
 
         // Save chunks
         const chunkRecords = chunks.map((chunk, idx) => ({
           noticeId,
-          chunkIndex: idx,
+          chunkIndex: startChunkIndex + idx,
           content: chunk.content,
           tokens: chunk.tokens,
+          sourceDocumentName: arq.titulo,
+          sourceDocumentType: arq.tipoDocumentoNome,
+          sourceDocumentKey: String(arq.sequencialDocumento),
+          sourceDocumentUrl: url,
         }));
 
         await this.prisma.noticeChunk.createMany({
@@ -95,15 +107,22 @@ export class DocumentProcessorService {
         });
 
         totalChunks += chunks.length;
+        nextChunkIndex += chunks.length;
 
         // Generate and store embeddings
         const savedChunks = await this.prisma.noticeChunk.findMany({
-          where: { noticeId, chunkIndex: { in: chunks.map((_, idx) => idx) } },
+          where: {
+            noticeId,
+            chunkIndex: {
+              gte: startChunkIndex,
+              lt: startChunkIndex + chunks.length,
+            },
+          },
           select: { id: true, chunkIndex: true },
         });
 
         for (const saved of savedChunks) {
-          const chunk = chunks[saved.chunkIndex];
+          const chunk = chunks[saved.chunkIndex - startChunkIndex];
           if (!chunk) continue;
           try {
             const embedding = await this.embeddingService.generateEmbedding(chunk.content);
@@ -121,21 +140,78 @@ export class DocumentProcessorService {
 
     return {
       noticeId,
-      status: totalChunks > 0 ? 'done' : 'error',
+      status: totalEmbeddings > 0 ? 'done' : 'error',
       chunksCount: totalChunks,
       embeddingsCount: totalEmbeddings,
+      message: totalEmbeddings > 0 ? undefined : 'Os textos foram extraidos, mas a indexacao semantica falhou.',
     };
   }
 
   async getProcessingStatus(noticeId: string): Promise<DocumentProcessingStatus> {
+    return this.loadStoredStatus(noticeId);
+  }
+
+  private async backfillMissingEmbeddings(noticeId: string): Promise<void> {
+    const [chunks, storedEmbeddings] = await Promise.all([
+      this.prisma.noticeChunk.findMany({
+        where: { noticeId },
+        select: { id: true, content: true },
+        orderBy: { chunkIndex: 'asc' },
+      }),
+      this.prisma.noticeEmbedding.findMany({
+        where: { noticeId },
+        select: { chunkId: true },
+      }),
+    ]);
+
+    const embeddedChunkIds = new Set(
+      storedEmbeddings
+        .map((item) => item.chunkId)
+        .filter((item): item is string => typeof item === 'string' && item.length > 0),
+    );
+
+    for (const chunk of chunks) {
+      if (embeddedChunkIds.has(chunk.id)) {
+        continue;
+      }
+
+      try {
+        const embedding = await this.embeddingService.generateEmbedding(chunk.content);
+        await this.embeddingService.storeEmbeddings(noticeId, [{ chunkId: chunk.id, embedding }]);
+      } catch (error) {
+        this.logger.warn(`Falha ao regenerar embedding para chunk ${chunk.id}: ${error}`);
+      }
+    }
+  }
+
+  private async loadStoredStatus(noticeId: string): Promise<DocumentProcessingStatus> {
     const [chunksCount, embeddingsCount] = await Promise.all([
       this.prisma.noticeChunk.count({ where: { noticeId } }),
       this.prisma.noticeEmbedding.count({ where: { noticeId } }),
     ]);
 
+    if (embeddingsCount > 0) {
+      return {
+        noticeId,
+        status: 'done',
+        chunksCount,
+        embeddingsCount,
+      };
+    }
+
+    if (chunksCount > 0) {
+      return {
+        noticeId,
+        status: 'idle',
+        chunksCount,
+        embeddingsCount,
+        message: 'Os textos foram extraidos, mas ainda faltam embeddings para a busca semantica.',
+      };
+    }
+
     return {
       noticeId,
-      status: chunksCount > 0 ? 'done' : 'idle',
+      status: 'idle',
       chunksCount,
       embeddingsCount,
     };

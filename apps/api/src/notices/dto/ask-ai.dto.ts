@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from "class-validator";
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from "class-validator";
 
 export class AskAIDto {
   @ApiProperty({
@@ -19,4 +19,13 @@ export class AskAIDto {
   @IsOptional()
   @IsUUID("4")
   userId?: string;
+
+  @ApiPropertyOptional({
+    enum: ["default", "participation_requirements"],
+    example: "participation_requirements",
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(["default", "participation_requirements"])
+  mode?: "default" | "participation_requirements";
 }

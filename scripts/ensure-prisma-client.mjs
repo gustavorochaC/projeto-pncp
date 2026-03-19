@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -73,7 +73,40 @@ function hasGeneratedPrismaClient() {
     return false;
   }
 
+  if (generatedClientRequiresAccelerate()) {
+    return false;
+  }
+
   return readdirSync(prismaClientDir).some((fileName) => fileName.startsWith("query_engine"));
+}
+
+function generatedClientRequiresAccelerate() {
+  const generatedIndexPath = join(prismaClientDir, "index.js");
+
+  if (!existsSync(generatedIndexPath)) {
+    return false;
+  }
+
+  try {
+    const generatedIndex = readFileSync(generatedIndexPath, "utf8");
+    return generatedIndex.includes('"copyEngine": false');
+  } catch (error) {
+    console.log(`Nao foi possivel inspecionar o Prisma Client gerado: ${error.message}`);
+    return false;
+  }
+}
+
+function resetPrismaClientDir() {
+  if (!existsSync(prismaClientDir)) {
+    return;
+  }
+
+  try {
+    rmSync(prismaClientDir, { recursive: true, force: true });
+    console.log("Removendo Prisma Client gerado para regenerar em modo local.");
+  } catch (error) {
+    console.log(`Nao foi possivel limpar o Prisma Client atual: ${error.message}`);
+  }
 }
 
 function shouldGeneratePrismaClient() {
@@ -87,6 +120,10 @@ function shouldGeneratePrismaClient() {
 
 async function main() {
   cleanupPrismaTempFiles();
+
+  if (generatedClientRequiresAccelerate()) {
+    resetPrismaClientDir();
+  }
 
   if (!shouldGeneratePrismaClient()) {
     console.log("Prisma Client pronto. Pulando nova geracao.");

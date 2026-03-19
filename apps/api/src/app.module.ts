@@ -6,6 +6,7 @@ import { AIService } from "./ai/ai.service";
 import { AIController } from "./ai/ai.controller";
 import { AIConversationController } from "./ai/ai-conversation.controller";
 import { AIConversationService } from "./ai/ai-conversation.service";
+import { ParticipationRequirementsService } from "./ai/participation-requirements.service";
 import { AITrainingController } from "./ai/ai-training.controller";
 import { AITrainingService } from "./ai/ai-training.service";
 import { EmbeddingService } from "./ai/rag/embedding.service";
@@ -45,6 +46,7 @@ import { PncpSyncService } from "./sources/pncp-sync.service";
     PncpSyncService,
     AIService,
     AIConversationService,
+    ParticipationRequirementsService,
     AITrainingService,
     EmbeddingService,
     DocumentProcessorService,

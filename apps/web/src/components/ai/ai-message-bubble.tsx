@@ -10,6 +10,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import type { AIMessageItem } from "@pncp/types";
+import { AIParticipationRequirementsCard } from "./ai-participation-requirements-card";
 
 interface Props {
   message: AIMessageItem;
@@ -118,6 +119,12 @@ export function AIMessageBubble({ message, pending = false }: Props) {
             </AccordionDetails>
           </Accordion>
         )}
+
+        {!pending &&
+          !isUser &&
+          message.structuredData?.kind === "participation_requirements" && (
+            <AIParticipationRequirementsCard result={message.structuredData} />
+          )}
       </Box>
     </Box>
   );

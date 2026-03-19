@@ -11,7 +11,6 @@ import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import OpenInNewOutlinedIcon from "@mui/icons-material/OpenInNewOutlined";
-import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { NoticeListItem } from "@pncp/types";
 import {
@@ -114,15 +113,6 @@ export function NoticeTable({
                     aria-label={`Abrir detalhes: ${notice.modality} ${notice.noticeNumber ?? ""} ${notice.agency}`.trim()}
                   >
                     Abrir detalhes
-                  </Button>
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    color="info"
-                    startIcon={<SmartToyOutlinedIcon fontSize="small" aria-hidden />}
-                    aria-label="Perguntar \u00e0 IA sobre este edital"
-                  >
-                    Perguntar \u00e0 IA
                   </Button>
                 </Box>
               </TableCell>

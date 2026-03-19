@@ -8,7 +8,6 @@ import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import OpenInNewOutlinedIcon from "@mui/icons-material/OpenInNewOutlined";
-import SmartToyOutlinedIcon from "@mui/icons-material/SmartToyOutlined";
 import { usePathname, useSearchParams } from "next/navigation";
 import type { NoticeListItem } from "@pncp/types";
 import {
@@ -129,15 +128,6 @@ function NoticeCard({
             aria-label={`Abrir detalhes do edital: ${title}`}
           >
             Abrir detalhes
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            color="info"
-            startIcon={<SmartToyOutlinedIcon fontSize="small" aria-hidden />}
-            aria-label="Perguntar \u00e0 IA sobre este edital"
-          >
-            Perguntar \u00e0 IA
           </Button>
         </Box>
       </Stack>
