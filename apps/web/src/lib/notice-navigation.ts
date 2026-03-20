@@ -1,6 +1,8 @@
 import {
+  DEFAULT_NOTICE_MULTI_TERM_MODE,
   PNCP_PORTAL_MAX_PAGES,
   PNCP_PORTAL_PAGE_SIZE,
+  isNoticeMultiTermMode,
   type NoticeSearchFilters,
   type NoticeSortOption,
 } from "@pncp/types";
@@ -10,6 +12,7 @@ export const NOTICE_HIGHLIGHT_PARAM = "highlightNotice";
 
 export const defaultNoticeFilters: NoticeSearchFilters = {
   query: "",
+  multiTermMode: DEFAULT_NOTICE_MULTI_TERM_MODE,
   state: "",
   city: "",
   modality: "",
@@ -95,10 +98,16 @@ export function parseNoticeFilters(
   const sort = isSortOption(sortValue)
     ? sortValue
     : defaultNoticeFilters.sort;
+  const multiTermModeValue = getFirstValue(params.multiTermMode);
+  const multiTermMode = isNoticeMultiTermMode(multiTermModeValue)
+    ? multiTermModeValue
+    : defaultNoticeFilters.multiTermMode;
 
   return {
     ...defaultNoticeFilters,
     query,
+    multiTermMode,
+    activeTerm: getFirstValue(params.activeTerm),
     state,
     city,
     agency: getFirstValue(params.agency),
@@ -134,6 +143,13 @@ export function buildNoticeSearchParams(
 
   Object.entries(filters).forEach(([key, value]) => {
     if (value == null || value === "" || value === false) {
+      return;
+    }
+
+    if (
+      key === "multiTermMode" &&
+      value === DEFAULT_NOTICE_MULTI_TERM_MODE
+    ) {
       return;
     }
 

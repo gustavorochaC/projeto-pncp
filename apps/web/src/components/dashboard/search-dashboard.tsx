@@ -1,6 +1,12 @@
 "use client";
 
-import { useDeferredValue, useEffect, useState } from "react";
+import {
+  startTransition,
+  type SetStateAction,
+  useDeferredValue,
+  useEffect,
+  useState,
+} from "react";
 import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
@@ -28,6 +34,7 @@ import {
   formatPortalResultsSummary,
   normalizePortalDashboardFilters,
 } from "@/components/dashboard/search-dashboard.utils";
+import { SearchDashboardMultiTermControls } from "@/components/dashboard/search-dashboard-multi-term-controls";
 import { NoticeCardList } from "@/components/notices/notice-card-list";
 import { useNotices } from "@/hooks/use-notices";
 import {
@@ -50,12 +57,21 @@ export function SearchDashboard({
   const [highlightedNoticeId, setHighlightedNoticeId] = useState<string | null>(
     initialHighlightNoticeId,
   );
-  const deferredQuery = useDeferredValue(filters.query);
+  const deferredFilters = useDeferredValue(filters);
   const queryChips = parseSearchTerms(filters.query);
 
+  const setSearchFilters = (updater: SetStateAction<NoticeSearchFilters>) => {
+    startTransition(() => {
+      setFilters((current) =>
+        normalizePortalDashboardFilters(
+          typeof updater === "function" ? updater(current) : updater,
+        ),
+      );
+    });
+  };
+
   useEffect(() => {
-    const normalizedFilters = normalizePortalDashboardFilters(filters);
-    const searchParams = buildNoticeSearchParams(normalizedFilters);
+    const searchParams = buildNoticeSearchParams(filters);
     const queryString = searchParams.toString();
     window.history.replaceState(
       null,
@@ -64,15 +80,12 @@ export function SearchDashboard({
     );
   }, [filters]);
 
-  const effectiveFilters = {
-    ...normalizePortalDashboardFilters(filters),
-    query: deferredQuery,
-  };
-  const noticesQuery = useNotices(effectiveFilters);
+  const noticesQuery = useNotices(deferredFilters);
   const resultsSummary = noticesQuery.data
     ? formatPortalResultsSummary(
         noticesQuery.data.items.length,
         noticesQuery.data.total,
+        noticesQuery.data.isTotalExact,
       )
     : null;
 
@@ -124,7 +137,7 @@ export function SearchDashboard({
                       .map((t) => t.trim())
                       .filter((t) => t.length > 0),
                   );
-                  setFilters((current) => ({
+                  setSearchFilters((current) => ({
                     ...current,
                     query: expanded.join(", "),
                     page: 1,
@@ -183,7 +196,7 @@ export function SearchDashboard({
                 placeholder="Ex.: SP"
                 value={filters.state ?? ""}
                 onChange={(e) =>
-                  setFilters((current) => ({
+                  setSearchFilters((current) => ({
                     ...current,
                     state: e.target.value,
                     page: 1,
@@ -200,7 +213,7 @@ export function SearchDashboard({
                 placeholder="Ex.: Sao Paulo"
                 value={filters.city ?? ""}
                 onChange={(e) =>
-                  setFilters((current) => ({
+                  setSearchFilters((current) => ({
                     ...current,
                     city: e.target.value,
                     page: 1,
@@ -217,7 +230,7 @@ export function SearchDashboard({
                 placeholder="Ex.: Pregao"
                 value={filters.modality ?? ""}
                 onChange={(e) =>
-                  setFilters((current) => ({
+                  setSearchFilters((current) => ({
                     ...current,
                     modality: e.target.value,
                     page: 1,
@@ -234,7 +247,7 @@ export function SearchDashboard({
                 label="Ordenar"
                 value={filters.sort}
                 onChange={(e) =>
-                  setFilters((current) => ({
+                  setSearchFilters((current) => ({
                     ...current,
                     sort: e.target.value as NoticeSearchFilters["sort"],
                     page: 1,
@@ -253,7 +266,7 @@ export function SearchDashboard({
             <Button
               variant={filters.onlyOpen ? "contained" : "outlined"}
               onClick={() =>
-                setFilters((current) => ({
+                setSearchFilters((current) => ({
                   ...current,
                   onlyOpen: !current.onlyOpen,
                   page: 1,
@@ -265,7 +278,7 @@ export function SearchDashboard({
             <Button
               variant="text"
               onClick={() => {
-                setFilters(normalizePortalDashboardFilters(defaultNoticeFilters));
+                setSearchFilters(defaultNoticeFilters);
                 setHighlightedNoticeId(null);
               }}
             >
@@ -274,6 +287,28 @@ export function SearchDashboard({
           </Stack>
         </Stack>
       </Paper>
+
+      <SearchDashboardMultiTermControls
+        searchTerms={queryChips}
+        multiTermMode={filters.multiTermMode ?? "any"}
+        activeTerm={filters.activeTerm}
+        termGroups={noticesQuery.data?.termGroups ?? []}
+        onModeChange={(multiTermMode) =>
+          setSearchFilters((current) => ({
+            ...current,
+            multiTermMode,
+            activeTerm: undefined,
+            page: 1,
+          }))
+        }
+        onActiveTermChange={(activeTerm) =>
+          setSearchFilters((current) => ({
+            ...current,
+            activeTerm,
+            page: 1,
+          }))
+        }
+      />
 
       {noticesQuery.isLoading ? (
         <Paper sx={{ p: 3 }}>
@@ -347,7 +382,7 @@ export function SearchDashboard({
                   disabled={filters.page === 1}
                   startIcon={<ChevronLeftIcon aria-hidden />}
                   onClick={() =>
-                    setFilters((current) => ({
+                    setSearchFilters((current) => ({
                       ...current,
                       page: Math.max((current.page ?? 1) - 1, 1),
                     }))
@@ -365,7 +400,7 @@ export function SearchDashboard({
                   }
                   endIcon={<ChevronRightIcon aria-hidden />}
                   onClick={() =>
-                    setFilters((current) => ({
+                    setSearchFilters((current) => ({
                       ...current,
                       page: Math.min(
                         (current.page ?? 1) + 1,

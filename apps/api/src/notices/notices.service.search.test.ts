@@ -18,6 +18,17 @@ function buildService(options?: {
   rowsResult?: unknown[] | unknown[][];
   detailResult?: Record<string, unknown>;
   normalizeNoticeImpl?: (payload: Record<string, unknown>) => Promise<unknown>;
+  searchEditaisImpl?: (
+    query: NoticeQueryDto,
+  ) => Promise<{
+    total: number;
+    types: unknown[];
+    items: Record<string, unknown>[];
+  }> | {
+    total: number;
+    types: unknown[];
+    items: Record<string, unknown>[];
+  };
   searchResult?: {
     total: number;
     types: unknown[];
@@ -46,6 +57,8 @@ function buildService(options?: {
   const upsertMock = vi.fn().mockResolvedValue(null);
   const searchEditaisMock = options?.searchError
     ? vi.fn().mockRejectedValue(options.searchError)
+    : options?.searchEditaisImpl
+      ? vi.fn(options.searchEditaisImpl)
     : vi.fn().mockResolvedValue(
         options?.searchResult ?? {
           total: 0,
@@ -174,14 +187,13 @@ describe("NoticesService.search", () => {
   });
 
   it("uses the local cache when the query has filters unsupported by the remote search", async () => {
-    const { service, findManyMock, upsertMock, searchEditaisMock, countMock } = buildService({
-      countResult: 1,
+    const { service, findManyMock, upsertMock, searchEditaisMock, countMock, transactionMock } = buildService({
       rowsResult: [
         {
           id: "local-notice-1",
           pncpId: "13891536000196-1-000011/2026",
           nomeOrgao: "MUNICIPIO DE AMERICA DOURADA",
-          objetoCompra: "Descricao local",
+          objetoCompra: "Aquisicao de cadeiras para escritorio",
           modalidadeNome: "Pregao - Eletronico",
           status: PncpEditalStatus.PUBLICADO,
           situacaoNome: "Divulgada no PNCP",
@@ -215,7 +227,8 @@ describe("NoticesService.search", () => {
     expect(searchEditaisMock).not.toHaveBeenCalled();
     expect(findManyMock).toHaveBeenCalledTimes(1);
     expect(upsertMock).not.toHaveBeenCalled();
-    expect(countMock).toHaveBeenCalledTimes(1);
+    expect(countMock).not.toHaveBeenCalled();
+    expect(transactionMock).not.toHaveBeenCalled();
     expect(result.total).toBe(1);
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.externalId).toBe("13891536000196-1-000011/2026");
@@ -303,7 +316,6 @@ describe("parseSearchTerms", () => {
 describe("NoticesService.search multi-term OR", () => {
   it("uses local cache with OR when query contains multiple comma-separated terms", async () => {
     const { service, searchEditaisMock, countMock, findManyMock, transactionMock } = buildService({
-      countResult: 2,
       rowsResult: [
         {
           id: "notice-cadeiras",
@@ -349,7 +361,13 @@ describe("NoticesService.search multi-term OR", () => {
           anoCompra: 2026,
           dataUltimaAtualizacao: null
         }
-      ]
+      ],
+      searchEditaisImpl: (query) =>
+        Promise.resolve({
+          total: query.query === "cadeiras" || query.query === "mesas" ? 1 : 0,
+          types: [],
+          items: []
+        })
     });
 
     const result = await service.search({
@@ -362,16 +380,21 @@ describe("NoticesService.search multi-term OR", () => {
     expect(searchEditaisMock).toHaveBeenCalledTimes(2);
     expect(searchEditaisMock).toHaveBeenCalledWith(expect.objectContaining({ query: "cadeiras" }));
     expect(searchEditaisMock).toHaveBeenCalledWith(expect.objectContaining({ query: "mesas" }));
-    expect(transactionMock).toHaveBeenCalledTimes(1);
-    expect(countMock).toHaveBeenCalledTimes(1);
+    expect(findManyMock).toHaveBeenCalledTimes(1);
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(countMock).not.toHaveBeenCalled();
     expect(result.total).toBe(2);
     expect(result.items).toHaveLength(2);
+    expect(result.isTotalExact).toBe(false);
+    expect(result.termGroups).toEqual([
+      { term: "cadeiras", total: 1 },
+      { term: "mesas", total: 1 },
+    ]);
   });
 
   it("falls back to local-only when prefetch fails for multi-term", async () => {
-    const { service, searchEditaisMock, countMock, transactionMock } = buildService({
+    const { service, searchEditaisMock, countMock, findManyMock, transactionMock } = buildService({
       searchError: new Error("pncp offline"),
-      countResult: 0,
       rowsResult: []
     });
 
@@ -383,9 +406,241 @@ describe("NoticesService.search multi-term OR", () => {
     } as NoticeQueryDto);
 
     expect(searchEditaisMock).toHaveBeenCalled();
-    expect(transactionMock).toHaveBeenCalledTimes(1);
-    expect(countMock).toHaveBeenCalledTimes(1);
+    expect(findManyMock).toHaveBeenCalledTimes(1);
+    expect(transactionMock).not.toHaveBeenCalled();
+    expect(countMock).not.toHaveBeenCalled();
     expect(result.items).toHaveLength(0);
+  });
+
+  it("returns only notices that match all terms in same_notice mode", async () => {
+    const { service, findManyMock } = buildService({
+      rowsResult: [
+        {
+          id: "notice-both",
+          pncpId: "33333333000300-1-000003/2026",
+          nomeOrgao: "ORGAO C",
+          objetoCompra: "Aquisicao de cadeiras e mesas escolares",
+          modalidadeNome: "Pregao - Eletronico",
+          status: PncpEditalStatus.PUBLICADO,
+          situacaoNome: "Divulgada no PNCP",
+          uf: "MG",
+          municipioNome: "Belo Horizonte",
+          dataPublicacaoPncp: new Date("2026-03-15"),
+          dataAberturaProposta: null,
+          dataEncerramentoProposta: null,
+          valorTotalEstimado: null,
+          linkEdital: null,
+          portalUrl: "https://pncp.gov.br/app/compras/33333333000300/2026/3",
+          isPublishedOnPncp: true,
+          validatedAt: new Date(),
+          numeroCompra: "3",
+          anoCompra: 2026,
+          dataUltimaAtualizacao: null
+        },
+        {
+          id: "notice-cadeiras-only",
+          pncpId: "44444444000400-1-000004/2026",
+          nomeOrgao: "ORGAO D",
+          objetoCompra: "Aquisicao de cadeiras",
+          modalidadeNome: "Pregao - Eletronico",
+          status: PncpEditalStatus.PUBLICADO,
+          situacaoNome: "Divulgada no PNCP",
+          uf: "SP",
+          municipioNome: "Campinas",
+          dataPublicacaoPncp: new Date("2026-03-13"),
+          dataAberturaProposta: null,
+          dataEncerramentoProposta: null,
+          valorTotalEstimado: null,
+          linkEdital: null,
+          portalUrl: "https://pncp.gov.br/app/compras/44444444000400/2026/4",
+          isPublishedOnPncp: true,
+          validatedAt: new Date(),
+          numeroCompra: "4",
+          anoCompra: 2026,
+          dataUltimaAtualizacao: null
+        }
+      ],
+      searchEditaisImpl: (query) =>
+        Promise.resolve({
+          total: query.query === "cadeiras" || query.query === "mesas" ? 1 : 0,
+          types: [],
+          items: []
+        })
+    });
+
+    const result = await service.search({
+      query: "cadeiras, mesas",
+      multiTermMode: "same_notice",
+      page: 1,
+      pageSize: PNCP_PORTAL_PAGE_SIZE,
+      sort: "publishedAt:desc"
+    } as NoticeQueryDto);
+
+    expect(findManyMock).toHaveBeenCalledTimes(1);
+    expect(result.total).toBe(1);
+    expect(result.items.map((item) => item.id)).toEqual(["notice-both"]);
+    expect(result.multiTermMode).toBe("same_notice");
+  });
+
+  it("uses the exact remote total when an activeTerm tab is selected", async () => {
+    const { service, searchEditaisMock, findManyMock } = buildService({
+      rowsResult: [
+        [
+          {
+            id: "notice-both",
+            pncpId: "55555555000500-1-000005/2026",
+            nomeOrgao: "ORGAO E",
+            objetoCompra: "Aquisicao de cadeiras e mesas",
+            modalidadeNome: "Pregao - Eletronico",
+            status: PncpEditalStatus.PUBLICADO,
+            situacaoNome: "Divulgada no PNCP",
+            uf: "SP",
+            municipioNome: "Santos",
+            dataPublicacaoPncp: new Date("2026-03-14"),
+            dataAberturaProposta: null,
+            dataEncerramentoProposta: null,
+            valorTotalEstimado: null,
+            linkEdital: null,
+            portalUrl: "https://pncp.gov.br/app/compras/55555555000500/2026/5",
+            isPublishedOnPncp: true,
+            validatedAt: new Date(),
+            numeroCompra: "5",
+            anoCompra: 2026,
+            dataUltimaAtualizacao: null
+          },
+          {
+            id: "notice-cadeiras-only",
+            pncpId: "66666666000600-1-000006/2026",
+            nomeOrgao: "ORGAO F",
+            objetoCompra: "Aquisicao de cadeiras ergonomicas",
+            modalidadeNome: "Pregao - Eletronico",
+            status: PncpEditalStatus.PUBLICADO,
+            situacaoNome: "Divulgada no PNCP",
+            uf: "RJ",
+            municipioNome: "Niteroi",
+            dataPublicacaoPncp: new Date("2026-03-12"),
+            dataAberturaProposta: null,
+            dataEncerramentoProposta: null,
+            valorTotalEstimado: null,
+            linkEdital: null,
+            portalUrl: "https://pncp.gov.br/app/compras/66666666000600/2026/6",
+            isPublishedOnPncp: true,
+            validatedAt: new Date(),
+            numeroCompra: "6",
+            anoCompra: 2026,
+            dataUltimaAtualizacao: null
+          }
+        ],
+        [
+          {
+            id: "notice-both",
+            pncpId: "55555555000500-1-000005/2026",
+            nomeOrgao: "ORGAO E",
+            objetoCompra: "Aquisicao de cadeiras e mesas",
+            modalidadeNome: "Pregao - Eletronico",
+            status: PncpEditalStatus.PUBLICADO,
+            situacaoNome: "Divulgada no PNCP",
+            uf: "SP",
+            municipioNome: "Santos",
+            dataPublicacaoPncp: new Date("2026-03-14"),
+            dataAberturaProposta: null,
+            dataEncerramentoProposta: null,
+            valorTotalEstimado: null,
+            linkEdital: null,
+            portalUrl: "https://pncp.gov.br/app/compras/55555555000500/2026/5",
+            isPublishedOnPncp: true,
+            validatedAt: new Date(),
+            numeroCompra: "5",
+            anoCompra: 2026,
+            dataUltimaAtualizacao: null
+          },
+          {
+            id: "notice-cadeiras-only",
+            pncpId: "66666666000600-1-000006/2026",
+            nomeOrgao: "ORGAO F",
+            objetoCompra: "Aquisicao de cadeiras ergonomicas",
+            modalidadeNome: "Pregao - Eletronico",
+            status: PncpEditalStatus.PUBLICADO,
+            situacaoNome: "Divulgada no PNCP",
+            uf: "RJ",
+            municipioNome: "Niteroi",
+            dataPublicacaoPncp: new Date("2026-03-12"),
+            dataAberturaProposta: null,
+            dataEncerramentoProposta: null,
+            valorTotalEstimado: null,
+            linkEdital: null,
+            portalUrl: "https://pncp.gov.br/app/compras/66666666000600/2026/6",
+            isPublishedOnPncp: true,
+            validatedAt: new Date(),
+            numeroCompra: "6",
+            anoCompra: 2026,
+            dataUltimaAtualizacao: null
+          }
+        ]
+      ],
+      searchEditaisImpl: (query) => {
+        if (query.query === "cadeiras") {
+          return Promise.resolve({
+            total: 4632,
+            types: [],
+            items: [
+              {
+                numero_controle_pncp: "55555555000500-1-000005/2026",
+                orgao_cnpj: "55555555000500",
+                orgao_nome: "ORGAO E",
+                modalidade_licitacao_id: "6",
+                modalidade_licitacao_nome: "Pregao - Eletronico",
+                situacao_nome: "Divulgada no PNCP",
+                data_publicacao_pncp: "2026-03-14T00:00:00.000Z",
+                description: "Aquisicao de cadeiras e mesas",
+                ano: "2026",
+                numero_sequencial: "5"
+              },
+              {
+                numero_controle_pncp: "66666666000600-1-000006/2026",
+                orgao_cnpj: "66666666000600",
+                orgao_nome: "ORGAO F",
+                modalidade_licitacao_id: "6",
+                modalidade_licitacao_nome: "Pregao - Eletronico",
+                situacao_nome: "Divulgada no PNCP",
+                data_publicacao_pncp: "2026-03-12T00:00:00.000Z",
+                description: "Aquisicao de cadeiras ergonomicas",
+                ano: "2026",
+                numero_sequencial: "6"
+              }
+            ]
+          });
+        }
+
+        return Promise.resolve({
+          total: 1280,
+          types: [],
+          items: []
+        });
+      }
+    });
+
+    const result = await service.search({
+      query: "cadeiras, mesas",
+      activeTerm: "cadeiras",
+      page: 1,
+      pageSize: PNCP_PORTAL_PAGE_SIZE,
+      sort: "publishedAt:desc"
+    } as NoticeQueryDto);
+
+    expect(searchEditaisMock).toHaveBeenCalledTimes(2);
+    expect(findManyMock).toHaveBeenCalledTimes(2);
+    expect(result.activeTerm).toBe("cadeiras");
+    expect(result.total).toBe(4632);
+    expect(result.isTotalExact).toBe(true);
+    expect(result.items.map((item) => item.id)).toEqual([
+      "notice-both",
+      "notice-cadeiras-only",
+    ]);
+    expect(result.termGroups).toEqual([
+      { term: "cadeiras", total: 4632 },
+      { term: "mesas", total: 1280 },
+    ]);
   });
 
   it("single-term query preserves original remote search behavior", async () => {

@@ -5,9 +5,12 @@ export type NoticeSortOption =
   | "estimatedValue:desc"
   | "estimatedValue:asc";
 
+export type NoticeMultiTermMode = "any" | "same_notice";
+
 export const PNCP_PORTAL_PAGE_SIZE = 10;
 export const PNCP_PORTAL_MAX_RESULTS = 9990;
 export const PNCP_PORTAL_MAX_PAGES = 999;
+export const DEFAULT_NOTICE_MULTI_TERM_MODE: NoticeMultiTermMode = "any";
 
 /**
  * Splits a comma-separated query string into unique, trimmed terms.
@@ -41,8 +44,16 @@ export function parseSearchTerms(query: string | null | undefined): string[] {
     });
 }
 
+export function isNoticeMultiTermMode(
+  value: string | null | undefined,
+): value is NoticeMultiTermMode {
+  return value === "any" || value === "same_notice";
+}
+
 export interface NoticeSearchFilters {
   query?: string;
+  multiTermMode?: NoticeMultiTermMode;
+  activeTerm?: string;
   state?: string;
   city?: string;
   agency?: string;
@@ -158,6 +169,20 @@ export interface PaginatedResponse<T> {
   pageSize: number;
   total: number;
   totalPages: number;
+}
+
+export interface NoticeSearchTermGroup {
+  term: string;
+  total: number;
+}
+
+export interface NoticeSearchResponse
+  extends PaginatedResponse<NoticeListItem> {
+  searchTerms: string[];
+  multiTermMode: NoticeMultiTermMode;
+  activeTerm: string | null;
+  termGroups: NoticeSearchTermGroup[];
+  isTotalExact: boolean;
 }
 
 export interface AskAIRequest {

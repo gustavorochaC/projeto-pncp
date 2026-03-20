@@ -5,12 +5,9 @@ import type {
   NoticeDetail,
   NoticeListItem,
   NoticeOfficialLink,
-  PaginatedResponse
+  NoticeSearchResponse,
 } from "@pncp/types";
-import {
-  PNCP_PORTAL_PAGE_SIZE,
-  parseSearchTerms
-} from "@pncp/types";
+import { PNCP_PORTAL_PAGE_SIZE } from "@pncp/types";
 import { AIService } from "../ai/ai.service";
 import { DocumentProcessorService } from "../ai/rag/document-processor.service";
 import { PrismaService } from "../common/prisma.service";
@@ -30,10 +27,18 @@ import {
   type NoticeListRow,
   noticeListSelect
 } from "./notice-search.mapper";
+import {
+  buildNoticeSearchTermGroups,
+  createNoticeSearchTermContext,
+  evaluateNoticeSearchRows,
+  filterEvaluationsByContext,
+  type NoticeSearchTermContext
+} from "./notice-search-term.util";
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = PNCP_PORTAL_PAGE_SIZE;
 const MAX_PAGE_SIZE = 100;
+type SearchItems = Awaited<ReturnType<PncpSearchService["searchEditais"]>>["items"];
 const CLOSED_STATUSES: PncpEditalStatus[] = [
   PncpEditalStatus.ENCERRADO,
   PncpEditalStatus.REVOGADO,
@@ -54,21 +59,22 @@ export class NoticesService {
     private readonly documentProcessorService: DocumentProcessorService
   ) {}
 
-  async search(query: NoticeQueryDto): Promise<PaginatedResponse<NoticeListItem>> {
-    const terms = parseSearchTerms(query.query);
+  async search(query: NoticeQueryDto): Promise<NoticeSearchResponse> {
+    const searchContext = createNoticeSearchTermContext(query);
+    const terms = searchContext.terms;
 
     if (terms.length > 1) {
-      return this.searchMultiTerm(query, terms);
+      return this.searchMultiTerm(query, searchContext);
     }
 
     if (!this.shouldQueryPncp(query)) {
-      return this.searchFromLocalCache(query);
+      return this.searchFromLocalCache(query, searchContext);
     }
 
     try {
-      return await this.searchFromPncp(query);
+      return await this.searchFromPncp(query, searchContext);
     } catch (error) {
-      const localResult = await this.searchFromLocalCache(query);
+      const localResult = await this.searchFromLocalCache(query, searchContext);
       this.logger.warn(
         `Busca remota do PNCP indisponivel. Usando cache local. Motivo: ${stringifyUnknown(error)}`
       );
@@ -221,7 +227,10 @@ export class NoticesService {
     return this.documentProcessorService.getProcessingStatus(id);
   }
 
-  private async searchFromPncp(query: NoticeQueryDto): Promise<PaginatedResponse<NoticeListItem>> {
+  private async searchFromPncp(
+    query: NoticeQueryDto,
+    searchContext: NoticeSearchTermContext
+  ): Promise<NoticeSearchResponse> {
     const page = normalizePortalSearchPage(query.page);
     const pageSize = normalizePageSize(query.pageSize);
     const remoteResult = await this.pncpSearchService.searchEditais({
@@ -230,24 +239,55 @@ export class NoticesService {
       pageSize
     });
     const items = await this.persistSearchItems(remoteResult.items);
-    const total = remoteResult.total;
-    const totalPages = pageSize > 0 ? Math.ceil(total / pageSize) : 0;
-
-    return {
+    return buildNoticeSearchResponse({
       items,
       page,
       pageSize,
-      total,
-      totalPages
-    };
+      total: remoteResult.total,
+      searchContext,
+      termGroups: [],
+      isTotalExact: true
+    });
   }
 
-  private async searchFromLocalCache(query: NoticeQueryDto): Promise<PaginatedResponse<NoticeListItem>> {
+  private async searchFromLocalCache(
+    query: NoticeQueryDto,
+    searchContext: NoticeSearchTermContext,
+    options?: {
+      termGroups?: NoticeSearchResponse["termGroups"];
+      isTotalExact?: boolean;
+    }
+  ): Promise<NoticeSearchResponse> {
     const page = normalizePage(query.page);
     const pageSize = normalizePageSize(query.pageSize);
     const skip = (page - 1) * pageSize;
-    const where = this.buildSearchWhere(query);
     const orderBy = this.buildOrderBy(query.sort);
+    const where = this.buildBaseSearchWhere(query);
+
+    if (searchContext.hasTerms) {
+      const rows = await this.prisma.pncpEdital.findMany({
+        where,
+        orderBy,
+        select: noticeListSelect
+      });
+      const evaluations = evaluateNoticeSearchRows(rows, searchContext);
+      const filteredRows = filterEvaluationsByContext(evaluations, searchContext).map(
+        (evaluation) => evaluation.row
+      );
+      const paginatedRows = filteredRows.slice(skip, skip + pageSize);
+
+      return buildNoticeSearchResponse({
+        items: paginatedRows.map((row) => mapPncpEditalRowToNoticeListItem(row)),
+        page,
+        pageSize,
+        total: filteredRows.length,
+        searchContext,
+        termGroups:
+          options?.termGroups ??
+          buildNoticeSearchTermGroups(evaluations, searchContext.terms),
+        isTotalExact: options?.isTotalExact ?? true
+      });
+    }
 
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.pncpEdital.count({ where }),
@@ -260,22 +300,45 @@ export class NoticesService {
       })
     ]);
 
-    return {
+    return buildNoticeSearchResponse({
       items: rows.map((row) => mapPncpEditalRowToNoticeListItem(row)),
       page,
       pageSize,
       total,
-      totalPages: pageSize > 0 ? Math.ceil(total / pageSize) : 0
-    };
+      searchContext,
+      termGroups: [],
+      isTotalExact: options?.isTotalExact ?? true
+    });
   }
 
   private async searchMultiTerm(
     query: NoticeQueryDto,
-    terms: string[]
-  ): Promise<PaginatedResponse<NoticeListItem>> {
+    searchContext: NoticeSearchTermContext
+  ): Promise<NoticeSearchResponse> {
     if (this.shouldQueryPncp(query)) {
       try {
-        await this.prefetchPncpForTerms(query, terms);
+        const remoteSnapshot = await this.prefetchPncpForTerms(
+          query,
+          searchContext.terms,
+          searchContext.activeTerm
+        );
+
+        if (searchContext.mode === "any" && searchContext.activeTerm && remoteSnapshot.activeTermResult) {
+          return buildNoticeSearchResponse({
+            items: await this.fetchPersistedItemsBySearchItems(remoteSnapshot.activeTermResult.items),
+            page: normalizePortalSearchPage(query.page),
+            pageSize: normalizePageSize(query.pageSize),
+            total: remoteSnapshot.activeTermResult.total,
+            searchContext,
+            termGroups: remoteSnapshot.termGroups,
+            isTotalExact: true
+          });
+        }
+
+        return this.searchFromLocalCache(query, searchContext, {
+          termGroups: remoteSnapshot.termGroups,
+          isTotalExact: false
+        });
       } catch (error) {
         this.logger.warn(
           `Prefetch remoto para busca multi-termo falhou. Usando cache local. Motivo: ${stringifyUnknown(error)}`
@@ -283,34 +346,58 @@ export class NoticesService {
       }
     }
 
-    return this.searchFromLocalCache(query);
+    return this.searchFromLocalCache(query, searchContext);
   }
 
   private async prefetchPncpForTerms(
     query: NoticeQueryDto,
-    terms: string[]
-  ): Promise<void> {
+    terms: string[],
+    activeTerm: string | null
+  ): Promise<{
+    activeTermResult: Awaited<ReturnType<PncpSearchService["searchEditais"]>> | null;
+    termGroups: NoticeSearchResponse["termGroups"];
+  }> {
+    const page = normalizePortalSearchPage(query.page);
+    const pageSize = normalizePageSize(query.pageSize);
     const results = await Promise.allSettled(
       terms.map((term) =>
         this.pncpSearchService.searchEditais({
           ...query,
           query: term,
-          page: 1
+          page: activeTerm === term ? page : 1,
+          pageSize: activeTerm ? (activeTerm === term ? pageSize : 1) : pageSize
         })
       )
     );
 
-    const allItems = results.flatMap((r) =>
-      r.status === "fulfilled" ? r.value.items : []
+    const fulfilledResults = results.flatMap((result, index) =>
+      result.status === "fulfilled"
+        ? [
+            {
+              term: terms[index] ?? "",
+              result: result.value
+            }
+          ]
+        : []
     );
+    const allItems = fulfilledResults.flatMap(({ result }) => result.items);
 
     if (allItems.length > 0) {
       await this.persistSearchItems(allItems);
     }
+
+    return {
+      activeTermResult:
+        fulfilledResults.find(({ term }) => term === activeTerm)?.result ?? null,
+      termGroups: fulfilledResults.map(({ term, result }) => ({
+        term,
+        total: result.total
+      }))
+    };
   }
 
   private async persistSearchItems(
-    items: Awaited<ReturnType<PncpSearchService["searchEditais"]>>["items"]
+    items: SearchItems
   ): Promise<NoticeListItem[]> {
     if (items.length === 0) {
       return [];
@@ -335,10 +422,26 @@ export class NoticesService {
       )
     );
 
+    return this.fetchPersistedItemsBySearchItems(items);
+  }
+
+  private async fetchPersistedItemsBySearchItems(items: SearchItems): Promise<NoticeListItem[]> {
+    const pncpIds = items
+      .map((item) => cleanText(item.numero_controle_pncp))
+      .filter((value): value is string => value !== null);
+
+    if (pncpIds.length === 0) {
+      return [];
+    }
+
+    return this.fetchPersistedItemsByPncpIds(pncpIds);
+  }
+
+  private async fetchPersistedItemsByPncpIds(pncpIds: string[]): Promise<NoticeListItem[]> {
     const rows = await this.prisma.pncpEdital.findMany({
       where: {
         pncpId: {
-          in: mappedItems.map((item) => item.create.pncpId)
+          in: pncpIds
         }
       },
       select: noticeListSelect
@@ -348,8 +451,8 @@ export class NoticesService {
       rows.map((row) => [row.pncpId, row])
     );
 
-    return mappedItems
-      .map((item) => rowsByPncpId.get(item.create.pncpId) ?? null)
+    return pncpIds
+      .map((pncpId) => rowsByPncpId.get(pncpId) ?? null)
       .filter((row): row is NoticeListRow => row !== null)
       .map((row) => mapPncpEditalRowToNoticeListItem(row));
   }
@@ -362,7 +465,7 @@ export class NoticesService {
     return resolvePncpSearchStatus(query) !== null;
   }
 
-  private buildSearchWhere(query: NoticeQueryDto): Prisma.PncpEditalWhereInput {
+  private buildBaseSearchWhere(query: NoticeQueryDto): Prisma.PncpEditalWhereInput {
     const conditions: Prisma.PncpEditalWhereInput[] = [
       {
         OR: [
@@ -371,26 +474,6 @@ export class NoticesService {
         ]
       }
     ];
-
-    const terms = parseSearchTerms(query.query);
-    if (terms.length > 0) {
-      const textFieldsOr = (term: string): Prisma.PncpEditalWhereInput[] => [
-        { objetoCompra: containsInsensitive(term) },
-        { nomeOrgao: containsInsensitive(term) },
-        { municipioNome: containsInsensitive(term) },
-        { modalidadeNome: containsInsensitive(term) },
-        { numeroControlePncp: containsInsensitive(term) },
-        { numeroCompra: containsInsensitive(term) }
-      ];
-
-      if (terms.length === 1) {
-        conditions.push({ OR: textFieldsOr(terms[0]) });
-      } else {
-        conditions.push({
-          OR: terms.map((term) => ({ OR: textFieldsOr(term) }))
-        });
-      }
-    }
 
     const state = cleanText(query.state)?.toUpperCase();
     if (state) {
@@ -698,4 +781,27 @@ function hasUnsupportedRemoteFilters(query: NoticeQueryDto): boolean {
     typeof query.estimatedValueMax === "number" ||
     query.onlyWithAttachments === true
   );
+}
+
+function buildNoticeSearchResponse(args: {
+  items: NoticeListItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  searchContext: NoticeSearchTermContext;
+  termGroups: NoticeSearchResponse["termGroups"];
+  isTotalExact: boolean;
+}): NoticeSearchResponse {
+  return {
+    items: args.items,
+    page: args.page,
+    pageSize: args.pageSize,
+    total: args.total,
+    totalPages: args.pageSize > 0 ? Math.ceil(args.total / args.pageSize) : 0,
+    searchTerms: args.searchContext.terms,
+    multiTermMode: args.searchContext.mode,
+    activeTerm: args.searchContext.activeTerm,
+    termGroups: args.termGroups,
+    isTotalExact: args.isTotalExact
+  };
 }

@@ -1,5 +1,8 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
-import { PNCP_PORTAL_PAGE_SIZE } from "@pncp/types";
+import {
+  DEFAULT_NOTICE_MULTI_TERM_MODE,
+  PNCP_PORTAL_PAGE_SIZE,
+} from "@pncp/types";
 import { Transform } from "class-transformer";
 import {
   IsBoolean,
@@ -16,6 +19,16 @@ export class NoticeQueryDto {
   @IsOptional()
   @IsString()
   query?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsIn(["any", "same_notice"])
+  multiTermMode = DEFAULT_NOTICE_MULTI_TERM_MODE;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  activeTerm?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

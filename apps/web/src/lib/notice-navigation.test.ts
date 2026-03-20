@@ -14,6 +14,10 @@ describe("defaultNoticeFilters", () => {
   it("uses the same page size as the PNCP portal", () => {
     expect(defaultNoticeFilters.pageSize).toBe(PNCP_PORTAL_PAGE_SIZE);
   });
+
+  it("defaults multi-term searches to any mode", () => {
+    expect(defaultNoticeFilters.multiTermMode).toBe("any");
+  });
 });
 
 describe("clampPortalPage", () => {
@@ -38,9 +42,13 @@ describe("parseNoticeFilters", () => {
   it("preserves comma-separated query terms from the URL", () => {
     const filters = parseNoticeFilters({
       query: "cadeiras, mesas",
+      multiTermMode: "same_notice",
+      activeTerm: "mesas",
     });
 
     expect(filters.query).toBe("cadeiras, mesas");
+    expect(filters.multiTermMode).toBe("same_notice");
+    expect(filters.activeTerm).toBe("mesas");
   });
 });
 
@@ -60,6 +68,8 @@ describe("buildNoticeSearchParams", () => {
     const original = "cadeiras, mesas, armarios";
     const params = buildNoticeSearchParams({
       query: original,
+      multiTermMode: "same_notice",
+      activeTerm: "mesas",
       page: 1,
       pageSize: PNCP_PORTAL_PAGE_SIZE,
       sort: "publishedAt:desc",
@@ -70,5 +80,19 @@ describe("buildNoticeSearchParams", () => {
     );
 
     expect(parsed.query).toBe(original);
+    expect(parsed.multiTermMode).toBe("same_notice");
+    expect(parsed.activeTerm).toBe("mesas");
+  });
+
+  it("omits the default multi-term mode from the URL", () => {
+    const params = buildNoticeSearchParams({
+      query: "cadeiras, mesas",
+      multiTermMode: "any",
+      page: 1,
+      pageSize: PNCP_PORTAL_PAGE_SIZE,
+      sort: "publishedAt:desc",
+    });
+
+    expect(params.has("multiTermMode")).toBe(false);
   });
 });

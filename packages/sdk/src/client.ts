@@ -13,9 +13,8 @@ import type {
   NoticeArchive,
   NoticeDetail,
   NoticeItem,
-  NoticeListItem,
   NoticeSearchFilters,
-  PaginatedResponse,
+  NoticeSearchResponse,
   UpdateTrainingRulePayload,
 } from "@pncp/types";
 
@@ -24,7 +23,7 @@ export class ApiClient {
 
   async getNotices(
     filters: NoticeSearchFilters,
-  ): Promise<PaginatedResponse<NoticeListItem>> {
+  ): Promise<NoticeSearchResponse> {
     const search = new URLSearchParams();
 
     Object.entries(filters).forEach(([key, value]) => {
